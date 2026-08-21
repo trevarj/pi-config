@@ -12,6 +12,7 @@
 let
   agents = dotfilesConfigs + "/agents";
   piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") extensionNames;
+  piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
   settingsBase = builtins.fromJSON (builtins.readFile (agents + "/.pi/agent/settings.base.json"));
   webSearchBase = builtins.fromJSON (builtins.readFile (agents + "/.pi/web-search.json"));
   trevPi = ./extensions/trev-pi;
@@ -20,7 +21,7 @@ let
     builtins.toJSON (
       settingsBase
       // {
-        packages = piPackages;
+        packages = piPackages ++ [ piUsage ];
         extensions = (settingsBase.extensions or [ ]) ++ [
           ./extensions/ollama-autostart.ts
           trevPi
@@ -55,6 +56,7 @@ in
 {
   home = {
     file = {
+      ".pi-lens/config.json".text = builtins.toJSON { widget.visible = false; };
       ".pi/agent/AGENTS.md".source = agents + "/.codex/AGENTS.md";
       ".pi/agent/APPEND_SYSTEM.md".source = agents + "/.pi/agent/APPEND_SYSTEM.md";
       ".pi/agent/models.json".source = ./config/models.json;

@@ -13,10 +13,9 @@ export interface ToolResultLike {
 }
 
 export interface FooterPart {
-  id: "project" | "branch" | "model" | "queue" | "quota" | "context";
+  id: "project" | "branch" | "model" | "queue" | "context";
   text: string;
   priority: number;
-  side: "left" | "right";
 }
 
 const ANSI_PATTERN = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
@@ -27,6 +26,19 @@ export function stripAnsi(text: string): string {
 
 export function oneLine(value: unknown): string {
   return String(value ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function compactPluginStatus(name: string, status: string): string {
+  const plain = oneLine(stripAnsi(status));
+  if (name === "pi-lens-lsp" && /^LSP (?:Active|Inactive)(?::.*)?$/i.test(plain)) return "󰒋";
+  const level = name === "caveman"
+    ? plain.match(/caveman level:\s*(\S+)/i)?.[1]?.toLowerCase()
+    : name === "ponytail"
+      ? plain.match(/\b(lite|full|ultra)\b/i)?.[1]?.toLowerCase()
+      : undefined;
+  if (!level) return plain;
+  const count = ({ lite: 1, full: 2, ultra: 3 } as Record<string, number>)[level];
+  return count ? `${name} ${"▰".repeat(count)}` : `${name} ${level}`;
 }
 
 export function shortenPath(path: string, home = homedir()): string {
@@ -143,26 +155,16 @@ export function fitFooterParts(
   parts: FooterPart[],
   width: number,
   measure: (text: string) => number = (text) => stripAnsi(text).length,
-): { left: FooterPart[]; right: FooterPart[] } {
+): FooterPart[] {
   const kept = [...parts];
-  const totalWidth = () => {
-    const left = kept.filter((part) => part.side === "left");
-    const right = kept.filter((part) => part.side === "right");
-    const segmentWidth = (items: FooterPart[]) => items.reduce((sum, item, index) => sum + measure(item.text) + (index ? 2 : 0), 0);
-    const leftWidth = segmentWidth(left);
-    const rightWidth = segmentWidth(right);
-    return leftWidth + rightWidth + (leftWidth && rightWidth ? 2 : 0);
-  };
+  const totalWidth = () => kept.reduce((sum, item, index) => sum + measure(item.text) + (index ? 2 : 0), 0);
 
   while (kept.length > 1 && totalWidth() > width) {
     const removable = kept.reduce((lowest, part) => part.priority < lowest.priority ? part : lowest);
     kept.splice(kept.indexOf(removable), 1);
   }
 
-  return {
-    left: kept.filter((part) => part.side === "left"),
-    right: kept.filter((part) => part.side === "right"),
-  };
+  return kept;
 }
 
 export function splitResourceCommands(commands: Array<{ name: string; source: string }>): {

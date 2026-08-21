@@ -28,6 +28,7 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   compactNumber,
+  compactPluginStatus,
   fitFooterParts,
   oneLine,
   shortenPath,
@@ -278,9 +279,7 @@ export default function trevPi(pi: ExtensionAPI) {
           state.branch = footerData.getGitBranch();
           const providerCount = footerData.getAvailableProviderCount();
           const statuses = [...footerData.getExtensionStatuses().entries()]
-            .sort(([a], [b]) => (a === "pi-quota-status" ? -1 : b === "pi-quota-status" ? 1 : a.localeCompare(b)));
-          const quota = statuses.find(([key]) => key === "pi-quota-status")?.[1];
-          const otherStatuses = statuses.filter(([key]) => key !== "pi-quota-status").map(([, text]) => oneLine(text));
+            .sort(([a], [b]) => a.localeCompare(b));
           const thinking = pi.getThinkingLevel();
           const styledModel = (includeProvider: boolean) =>
             `${theme.fg("accent", "󰚩")} ${theme.fg("text", modelName(ctx, includeProvider))} ${theme.fg("dim", `· ${thinking}`)}`;
@@ -291,42 +290,41 @@ export default function trevPi(pi: ExtensionAPI) {
               ? "warning"
               : "dim";
           const queue = ctx.hasPendingMessages();
+          const innerWidth = Math.max(1, width - 4);
           const parts = (useShortLabels: boolean): FooterPart[] => [
+            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 3 },
             {
               id: "project",
               text: `${theme.fg("accent", "")} ${theme.fg("muted", projectName(ctx))}`,
               priority: 1,
-              side: "left",
             },
-            ...(state.branch ? [{ id: "branch", text: theme.fg("muted", ` ${state.branch}`), priority: 2, side: "left" } as FooterPart] : []),
-            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 3, side: "right" },
-            { id: "context", text: theme.fg(contextColor, contextText(ctx, !useShortLabels)), priority: 6, side: "right" },
-            ...(quota ? [{ id: "quota", text: quota, priority: 5, side: "right" } as FooterPart] : []),
+            ...(state.branch ? [{ id: "branch", text: theme.fg("muted", ` ${state.branch}`), priority: 2 } as FooterPart] : []),
+            { id: "context", text: theme.fg(contextColor, contextText(ctx, !useShortLabels)), priority: 6 },
             ...(queue ? [{
               id: "queue",
               text: theme.fg("warning", useShortLabels ? "󰜎" : "󰜎 queued"),
               priority: 4,
-              side: "right",
             } as FooterPart] : []),
           ];
 
           const full = parts(false);
           const fullWidth = full.reduce((sum, part) => sum + visibleWidth(part.text) + 2, -2);
-          const fitted = fitFooterParts(fullWidth <= width ? full : parts(true), width, visibleWidth);
-          const left = fitted.left.map((part) => part.text).join("  ");
-          const rightParts = fitted.right.map((part) => part.text);
-          if (otherStatuses.length && visibleWidth(left) + visibleWidth(rightParts.join("  ")) + 4 < width) {
-            rightParts.push(...otherStatuses);
-          }
-          let right = rightParts.join("  ");
-          const gap = left && right ? Math.max(2, width - visibleWidth(left) - visibleWidth(right)) : 0;
-          let line = left + " ".repeat(gap) + right;
-          if (visibleWidth(line) > width) line = truncateToWidth(line, width, "…");
-          if (!left && right) {
-            right = truncateToWidth(right, width, "…");
-            line = " ".repeat(Math.max(0, width - visibleWidth(right))) + right;
-          }
-          return [line];
+          const fitted = fitFooterParts(fullWidth <= innerWidth ? full : parts(true), innerWidth, visibleWidth);
+          const primary = truncateToWidth(fitted.map((part) => part.text).join("  "), innerWidth, "…");
+
+          const pluginValues = statuses.map(([name, text]) => compactPluginStatus(name, text));
+          const pluginPrefix = theme.fg("dim", "󰐱");
+          const plugins = truncateToWidth(
+            `${pluginPrefix}  ${pluginValues.length ? pluginValues.join(theme.fg("dim", " · ")) : theme.fg("dim", "—")}`,
+            innerWidth,
+            "…",
+          );
+          const row = (content: string) =>
+            `${theme.fg("border", "│")} ${content}${" ".repeat(Math.max(0, innerWidth - visibleWidth(content)))} ${theme.fg("border", "│")}`;
+          const rail = (leftCorner: string, rightCorner: string) =>
+            theme.fg("border", `${leftCorner}${"─".repeat(Math.max(0, width - 2))}${rightCorner}`);
+
+          return [rail("╭", "╮"), row(primary), row(plugins), rail("╰", "╯")];
         },
       };
     });
@@ -428,7 +426,7 @@ export default function trevPi(pi: ExtensionAPI) {
         const working = state.working
           ? theme.fg("accent", ` ${SPINNER_FRAMES[state.spinnerFrame]} working `)
           : "";
-        const top = frameRail(theme.fg("muted", "─ prompt "), working, width, color, ["╭", "╮"]);
+        const top = frameRail("", working, width, color, ["╭", "╮"]);
         const output = [top];
         const cursor = "\x1b[7m \x1b[0m";
         editorLines.forEach((rawLine, index) => {

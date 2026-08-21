@@ -55,8 +55,9 @@
               nativeBuildInputs = [ pkgs.nodejs ];
             }
             ''
-              node --test \
+              node --experimental-strip-types --test \
                 ${./extensions}/ollama-autostart.test.ts \
+                ${./extensions/pi-usage}/test/claude.test.ts \
                 ${./extensions/trev-pi}/layout.test.ts
               touch "$out"
             '';

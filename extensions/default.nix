@@ -1,5 +1,6 @@
 {
   callPackage,
+  esbuild,
   lib,
 }:
 
@@ -18,7 +19,7 @@ callPackage ../npm-bundle.nix { } {
   version = "1.0.0";
   root = ./.;
 
-  npmDepsHash = "sha256-tvGu0HZoKlm4lCVgu9Jnf8xn2j6YYjTgfrZGyGZzA8A=";
+  npmDepsHash = "sha256-jCk//YK4e6j16K1ixuZEi4sV2nvJMACMQFpNEGpevBo=";
 
   extraAttrs = {
     # Every extension declares the pi core as a peer dependency. The installed
@@ -34,9 +35,26 @@ callPackage ../npm-bundle.nix { } {
     # is absent. qmd isn't in nixpkgs and core memory works without it, so just
     # silence the notice instead of packaging qmd. Drops the single notify
     # call; the leftover empty `if (ctx.hasUI) {}` is valid TS and harmless.
+    nativeBuildInputs = [ esbuild ];
+
     postInstall = ''
       sed -i '/ctx\.ui\.notify(qmdInstallInstructions()/d' \
         $out/lib/node_modules/pi-memory/index.ts
+
+      mkdir -p $out/lib/node_modules/@trevarj
+      cp -r ${./pi-usage} $out/lib/node_modules/@trevarj/pi-usage
+      chmod -R u+w $out/lib/node_modules/@trevarj/pi-usage
+      cd $out/lib/node_modules/@trevarj/pi-usage
+      rm -rf dist
+      esbuild src/index.ts \
+        --bundle \
+        --format=esm \
+        --platform=node \
+        --target=es2022 \
+        --packages=external \
+        --outdir=dist \
+        --out-extension:.js=.ts \
+        --sourcemap
     '';
 
     meta = {

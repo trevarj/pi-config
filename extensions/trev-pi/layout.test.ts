@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   compactNumber,
+  compactPluginStatus,
   fitFooterParts,
   oneLine,
   shortenPath,
@@ -71,25 +72,22 @@ test("summarizes built-in results without hiding failures", () => {
 
 test("drops footer segments by declared priority at narrow widths", () => {
   const parts: FooterPart[] = [
-    { id: "project", text: " trev-nix", priority: 1, side: "left" },
-    { id: "branch", text: " main", priority: 2, side: "left" },
-    { id: "model", text: "󰚩 model · high", priority: 3, side: "right" },
-    { id: "queue", text: "󰜎 queued", priority: 4, side: "right" },
-    { id: "quota", text: "quota 84% left", priority: 5, side: "right" },
-    { id: "context", text: "󰍛 12%/200k", priority: 6, side: "right" },
+    { id: "project", text: " trev-nix", priority: 1 },
+    { id: "branch", text: " main", priority: 2 },
+    { id: "model", text: "󰚩 model · high", priority: 3 },
+    { id: "queue", text: "󰜎 queued", priority: 4 },
+    { id: "context", text: "󰍛 12%/200k", priority: 5 },
   ];
   const measure = (text: string) => Array.from(stripAnsi(text)).length;
 
   const wide = fitFooterParts(parts, 120, measure);
-  assert.equal(wide.left.length + wide.right.length, 6);
+  assert.equal(wide.length, 5);
 
   const medium = fitFooterParts(parts, 80, measure);
-  assert.ok(medium.right.some((part) => part.id === "context"));
-  assert.ok(medium.right.some((part) => part.id === "quota"));
+  assert.ok(medium.some((part) => part.id === "context"));
 
   const narrow = fitFooterParts(parts, 40, measure);
-  assert.deepEqual(narrow.right.map((part) => part.id), ["queue", "quota", "context"]);
-  assert.equal(narrow.left.length, 0);
+  assert.deepEqual(narrow.map((part) => part.id), ["model", "queue", "context"]);
 });
 
 test("sanitizes ANSI text and compact values", () => {
@@ -98,4 +96,9 @@ test("sanitizes ANSI text and compact values", () => {
   assert.equal(compactNumber(999), "999");
   assert.equal(compactNumber(1_500), "1.5k");
   assert.equal(compactNumber(1_000_000), "1.0M");
+  assert.equal(compactPluginStatus("caveman", "⠠⠄ caveman level: FULL"), "caveman ▰▰");
+  assert.equal(compactPluginStatus("ponytail", "○ 🐴 ponytail: ⚡ FULL"), "ponytail ▰▰");
+  assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Inactive"), "󰒋");
+  assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Active: typescript"), "󰒋");
+  assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Failed: typescript"), "LSP Failed: typescript");
 });

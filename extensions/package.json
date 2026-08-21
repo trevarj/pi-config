@@ -11,7 +11,6 @@
     "@gotgenes/pi-anthropic-auth": "2.0.6",
     "pi-lens": "4.0.1",
     "pi-memory": "0.4.2",
-    "pi-quota-status": "0.3.0",
     "pi-simplify": "0.2.3",
     "pi-subagents": "0.51.0",
     "pi-web-access": "0.24.0"
