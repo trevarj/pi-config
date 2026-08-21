@@ -57,6 +57,7 @@
             ''
               node --experimental-strip-types --test \
                 ${./extensions}/ollama-autostart.test.ts \
+                ${./extensions}/work-mode.test.ts \
                 ${./extensions/pi-usage}/test/claude.test.ts \
                 ${./extensions/trev-pi}/layout.test.ts
               touch "$out"
@@ -67,6 +68,7 @@
           ${piAgent}/bin/pi \
             --extension ${./extensions}/ollama-autostart.ts \
             --extension ${./extensions/trev-pi} \
+            --extension ${./extensions}/work-mode.ts \
             --theme ${./extensions/trev-pi}/trev-pi.json \
             --use-theme trev-pi \
             --list-models >/dev/null
