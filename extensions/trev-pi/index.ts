@@ -1,0 +1,507 @@
+import { basename } from "node:path";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import {
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
+  CustomEditor,
+  keyText,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type KeybindingsManager,
+  type ReadonlyFooterDataProvider,
+  type Theme,
+  VERSION,
+} from "@earendil-works/pi-coding-agent";
+import {
+  Container,
+  type Component,
+  type EditorTheme,
+  type TUI,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
+import {
+  compactNumber,
+  fitFooterParts,
+  oneLine,
+  shortenPath,
+  splitResourceCommands,
+  stripAnsi,
+  toolSubject,
+  toolSummary,
+  type BuiltInToolName,
+  type FooterPart,
+  type ToolResultLike,
+} from "./layout.ts";
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const TOOL_ICONS: Record<BuiltInToolName, string> = {
+  bash: "",
+  read: "󰈙",
+  edit: "",
+  write: "󰆓",
+  grep: "",
+  find: "󰱼",
+  ls: "",
+};
+const TOOL_NAMES = Object.keys(TOOL_ICONS) as BuiltInToolName[];
+
+interface UiState {
+  working: boolean;
+  spinnerFrame: number;
+  spinnerTimer?: ReturnType<typeof setInterval>;
+  errorTimer?: ReturnType<typeof setTimeout>;
+  errorUntil: number;
+  hasUserMessage: boolean;
+  branch: string | null;
+  tui?: TUI;
+  footerData?: ReadonlyFooterDataProvider;
+}
+
+class SingleLine implements Component {
+  constructor(private readonly value: string) {}
+
+  render(width: number): string[] {
+    return width > 0 ? [truncateToWidth(this.value, width, "…")] : [];
+  }
+
+  invalidate(): void {}
+}
+
+function emptyComponent(): Component {
+  return new Container();
+}
+
+function frameRail(
+  left: string,
+  right: string,
+  width: number,
+  color: (text: string) => string,
+  corners: [string, string],
+): string {
+  if (width <= 0) return "";
+  if (width === 1) return color(corners[0]);
+  const available = width - 2;
+  let leftText = left;
+  let rightText = right;
+  while (visibleWidth(leftText) + visibleWidth(rightText) + 1 > available && visibleWidth(rightText) > 0) {
+    rightText = truncateToWidth(rightText, visibleWidth(rightText) - 1, "");
+  }
+  while (visibleWidth(leftText) + visibleWidth(rightText) + 1 > available && visibleWidth(leftText) > 0) {
+    leftText = truncateToWidth(leftText, visibleWidth(leftText) - 1, "");
+  }
+  const fill = "─".repeat(Math.max(0, available - visibleWidth(leftText) - visibleWidth(rightText)));
+  return color(corners[0]) + leftText + color(fill) + rightText + color(corners[1]);
+}
+
+function isRail(line: string): boolean {
+  const plain = stripAnsi(line);
+  return plain.includes("─") && plain.replace(/[─↑↓0-9 ]/g, "") === "";
+}
+
+function scrollLabel(line: string | undefined): string {
+  const plain = stripAnsi(line ?? "");
+  const match = plain.match(/([↑↓])\s*(\d+)/);
+  return match ? ` ${match[1]} ${match[2]} ` : "";
+}
+
+function resourceLines(label: string, values: string[], width: number, theme: Theme, limit?: number): string[] {
+  const shown = limit === undefined ? values : values.slice(0, limit);
+  const suffix = limit !== undefined && values.length > shown.length ? " · …" : "";
+  const prefix = `${label.padEnd(10)} `;
+  const content = shown.length ? shown.join(" · ") + suffix : "none";
+  const wrapped = wrapTextWithAnsi(theme.fg("text", content), Math.max(1, width - visibleWidth(prefix)));
+  return wrapped.map((line, index) => (index === 0 ? theme.fg("muted", prefix) : " ".repeat(visibleWidth(prefix))) + line);
+}
+
+function projectName(ctx: ExtensionContext): string {
+  return basename(ctx.cwd) || shortenPath(ctx.cwd);
+}
+
+function modelName(ctx: ExtensionContext, includeProvider = false): string {
+  if (!ctx.model) return "no model";
+  return includeProvider ? `${ctx.model.provider}/${ctx.model.id}` : ctx.model.id;
+}
+
+function titleFor(ctx: ExtensionContext): string {
+  return `π ${projectName(ctx)} · ${modelName(ctx)}`;
+}
+
+function contextText(ctx: ExtensionContext, withLabel: boolean): string {
+  const usage = ctx.getContextUsage();
+  const window = usage?.contextWindow ?? ctx.model?.contextWindow;
+  const percent = usage?.percent === null || usage?.percent === undefined ? "?" : `${Math.round(usage.percent)}%`;
+  const value = `${percent}/${window ? compactNumber(window) : "?"}`;
+  return withLabel ? `󰍛 ctx ${value}` : `󰍛 ${value}`;
+}
+
+function setupToolRenderers(pi: ExtensionAPI): void {
+  const factories = {
+    bash: createBashToolDefinition,
+    read: createReadToolDefinition,
+    edit: createEditToolDefinition,
+    write: createWriteToolDefinition,
+    grep: createGrepToolDefinition,
+    find: createFindToolDefinition,
+    ls: createLsToolDefinition,
+  } as const;
+  const cache = new Map<string, Record<BuiltInToolName, any>>();
+  const definitions = (cwd: string): Record<BuiltInToolName, any> => {
+    let value = cache.get(cwd);
+    if (!value) {
+      value = Object.fromEntries(TOOL_NAMES.map((name) => [name, factories[name](cwd)])) as Record<BuiltInToolName, any>;
+      cache.set(cwd, value);
+    }
+    return value;
+  };
+
+  for (const name of TOOL_NAMES) {
+    const original = definitions(process.cwd())[name];
+    pi.registerTool({
+      ...original,
+      renderShell: "self",
+      async execute(toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown, ctx: ExtensionContext) {
+        return definitions(ctx.cwd)[name].execute(toolCallId, params, signal, onUpdate, ctx);
+      },
+      renderCall(args: Record<string, unknown>, theme: Theme, context: any) {
+        if (context.expanded) {
+          const state = context.state as {
+            originalState?: Record<string, unknown>;
+            originalCall?: Component;
+          };
+          state.originalState ??= {};
+          const component = definitions(context.cwd)[name].renderCall?.(args, theme, {
+            ...context,
+            state: state.originalState,
+            lastComponent: state.originalCall,
+          }) ?? emptyComponent();
+          state.originalCall = component;
+          return component;
+        }
+        if (!context.isPartial && context.executionStarted) return emptyComponent();
+        const status = theme.fg("accent", "…");
+        const icon = theme.fg("accent", TOOL_ICONS[name]);
+        const title = theme.fg("toolTitle", theme.bold(name));
+        const subject = theme.fg("toolOutput", toolSubject(name, args));
+        return new SingleLine(`${status} ${icon} ${title}  ${subject}`);
+      },
+      renderResult(result: ToolResultLike, options: { expanded: boolean; isPartial: boolean }, theme: Theme, context: any) {
+        const state = context.state as {
+          originalState?: Record<string, any>;
+          originalResult?: Component;
+        };
+        state.originalState ??= {};
+        if (options.expanded) {
+          const component = definitions(context.cwd)[name].renderResult?.(result, options, theme, {
+            ...context,
+            state: state.originalState,
+            lastComponent: state.originalResult,
+          }) ?? emptyComponent();
+          state.originalResult = component;
+          return component;
+        }
+        if (options.isPartial) return emptyComponent();
+        if (state.originalState.interval) {
+          clearInterval(state.originalState.interval);
+          state.originalState.interval = undefined;
+        }
+        const summary = toolSummary(name, context.args, result, context.isError);
+        const negative = context.isError || summary.negative;
+        const status = theme.fg(negative ? "error" : "success", negative ? "✗" : "✓");
+        const icon = theme.fg("accent", TOOL_ICONS[name]);
+        const title = theme.fg("toolTitle", theme.bold(name));
+        const subject = theme.fg("toolOutput", toolSubject(name, context.args));
+        const detail = theme.fg(negative ? "error" : "dim", summary.text);
+        return new SingleLine(`${status} ${icon} ${title}  ${subject} · ${detail}`);
+      },
+    } as any);
+  }
+}
+
+export default function trevPi(pi: ExtensionAPI) {
+  setupToolRenderers(pi);
+
+  const state: UiState = {
+    working: false,
+    spinnerFrame: 0,
+    errorUntil: 0,
+    hasUserMessage: false,
+    branch: null,
+  };
+  let lastContext: ExtensionContext | undefined;
+
+  const stopSpinner = () => {
+    if (state.spinnerTimer) clearInterval(state.spinnerTimer);
+    state.spinnerTimer = undefined;
+  };
+  const requestRender = () => state.tui?.requestRender();
+  const flashError = () => {
+    state.errorUntil = Date.now() + 1_500;
+    if (state.errorTimer) clearTimeout(state.errorTimer);
+    state.errorTimer = setTimeout(() => {
+      state.errorTimer = undefined;
+      requestRender();
+    }, 1_500);
+    requestRender();
+  };
+  const refreshTitle = (ctx: ExtensionContext) => ctx.ui.setTitle(titleFor(ctx));
+
+  pi.on("session_start", (_event, ctx) => {
+    lastContext = ctx;
+    state.hasUserMessage = ctx.sessionManager.getBranch().some(
+      (entry) => entry.type === "message" && entry.message.role === "user",
+    );
+    if (ctx.mode !== "tui") return;
+
+    ctx.ui.setWorkingVisible(false);
+    ctx.ui.setHiddenThinkingLabel(`󰧑 reasoning hidden (${keyText("app.thinking.toggle")})`);
+
+    ctx.ui.setFooter((tui, theme, footerData) => {
+      state.tui = tui;
+      state.footerData = footerData;
+      state.branch = footerData.getGitBranch();
+      const unsubscribe = footerData.onBranchChange(() => {
+        state.branch = footerData.getGitBranch();
+        tui.requestRender();
+      });
+
+      return {
+        dispose: unsubscribe,
+        invalidate() {},
+        render(width: number): string[] {
+          state.branch = footerData.getGitBranch();
+          const providerCount = footerData.getAvailableProviderCount();
+          const statuses = [...footerData.getExtensionStatuses().entries()]
+            .sort(([a], [b]) => (a === "pi-quota-status" ? -1 : b === "pi-quota-status" ? 1 : a.localeCompare(b)));
+          const quota = statuses.find(([key]) => key === "pi-quota-status")?.[1];
+          const otherStatuses = statuses.filter(([key]) => key !== "pi-quota-status").map(([, text]) => oneLine(text));
+          const thinking = pi.getThinkingLevel();
+          const styledModel = (includeProvider: boolean) =>
+            `${theme.fg("accent", "󰚩")} ${theme.fg("text", modelName(ctx, includeProvider))} ${theme.fg("dim", `· ${thinking}`)}`;
+          const usage = ctx.getContextUsage();
+          const contextColor = usage?.percent !== null && usage?.percent !== undefined && usage.percent > 90
+            ? "error"
+            : usage?.percent !== null && usage?.percent !== undefined && usage.percent > 70
+              ? "warning"
+              : "dim";
+          const queue = ctx.hasPendingMessages();
+          const parts = (useShortLabels: boolean): FooterPart[] => [
+            {
+              id: "project",
+              text: `${theme.fg("accent", "")} ${theme.fg("muted", projectName(ctx))}`,
+              priority: 1,
+              side: "left",
+            },
+            ...(state.branch ? [{ id: "branch", text: theme.fg("muted", ` ${state.branch}`), priority: 2, side: "left" } as FooterPart] : []),
+            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 3, side: "right" },
+            { id: "context", text: theme.fg(contextColor, contextText(ctx, !useShortLabels)), priority: 6, side: "right" },
+            ...(quota ? [{ id: "quota", text: quota, priority: 5, side: "right" } as FooterPart] : []),
+            ...(queue ? [{
+              id: "queue",
+              text: theme.fg("warning", useShortLabels ? "󰜎" : "󰜎 queued"),
+              priority: 4,
+              side: "right",
+            } as FooterPart] : []),
+          ];
+
+          const full = parts(false);
+          const fullWidth = full.reduce((sum, part) => sum + visibleWidth(part.text) + 2, -2);
+          const fitted = fitFooterParts(fullWidth <= width ? full : parts(true), width, visibleWidth);
+          const left = fitted.left.map((part) => part.text).join("  ");
+          const rightParts = fitted.right.map((part) => part.text);
+          if (otherStatuses.length && visibleWidth(left) + visibleWidth(rightParts.join("  ")) + 4 < width) {
+            rightParts.push(...otherStatuses);
+          }
+          let right = rightParts.join("  ");
+          const gap = left && right ? Math.max(2, width - visibleWidth(left) - visibleWidth(right)) : 0;
+          let line = left + " ".repeat(gap) + right;
+          if (visibleWidth(line) > width) line = truncateToWidth(line, width, "…");
+          if (!left && right) {
+            right = truncateToWidth(right, width, "…");
+            line = " ".repeat(Math.max(0, width - visibleWidth(right))) + right;
+          }
+          return [line];
+        },
+      };
+    });
+
+    ctx.ui.setHeader((tui, theme) => {
+      state.tui = tui;
+      return new (class implements Component {
+        private expanded = false;
+
+        setExpanded(expanded: boolean): void {
+          this.expanded = expanded;
+          tui.requestRender();
+        }
+
+        invalidate(): void {}
+
+        render(width: number): string[] {
+          const resources = splitResourceCommands(pi.getCommands().map((command) => ({
+            name: command.name,
+            source: command.source,
+          })));
+          const tools = [...pi.getActiveTools()].sort((a, b) => a.localeCompare(b));
+          const counts = `${resources.skills.length} skills · ${resources.commands.length} commands · ${resources.prompts.length} prompts · ${tools.length} tools`;
+          const identity = `π pi · ${projectName(ctx)} · ${modelName(ctx)}`;
+          if (state.hasUserMessage) return [truncateToWidth(theme.fg("accent", identity), width, "…")];
+          if (width < 60) return [truncateToWidth(theme.fg("accent", `π pi v${VERSION}`) + theme.fg("dim", ` · ${counts}`), width, "…")];
+
+          const logo = [
+            `${theme.fg("accent", "╭───╮")}  ${theme.bold(theme.fg("accent", "pi"))}${theme.fg("dim", `  v${VERSION}`)}`,
+            `${theme.fg("accent", "│ π │")}`,
+            `${theme.fg("accent", "╰───╯")}`,
+          ];
+          const branch = state.branch ? `  ${theme.fg("muted", ` ${state.branch}`)}` : "";
+          const project = `${theme.fg("accent", "")} ${theme.fg("text", projectName(ctx))}${branch}  ${theme.fg("dim", shortenPath(ctx.cwd))}`;
+          const model = `${theme.fg("accent", "󰚩")} ${theme.fg("text", modelName(ctx, true))} ${theme.fg("dim", `· ${pi.getThinkingLevel()}`)}`;
+          const lines = [...logo, "", truncateToWidth(project, width, "…"), truncateToWidth(model, width, "…"), ""];
+          lines.push(...resourceLines("skills", resources.skills, width, theme, this.expanded ? undefined : 6));
+          lines.push(...resourceLines("commands", resources.commands, width, theme, this.expanded ? undefined : 6));
+          if (this.expanded) {
+            lines.push(...resourceLines("prompts", resources.prompts, width, theme));
+            lines.push(...resourceLines("tools", tools, width, theme));
+          }
+          lines.push(theme.fg("dim", counts));
+          if (!ctx.isProjectTrusted()) lines.push(theme.fg("warning", "󰌾 project resources disabled (untrusted)"));
+          lines.push("");
+          const hints = [
+            `${keyText("app.interrupt")} interrupt`,
+            "/ commands",
+            "! shell",
+            `${keyText("app.tools.expand")} details`,
+            `${keyText("app.thinking.toggle")} reasoning`,
+            `${keyText("app.model.select")} model`,
+            `${keyText("app.editor.external")} editor`,
+          ].join(" · ");
+          lines.push(...wrapTextWithAnsi(theme.fg("dim", hints), width));
+          return lines;
+        }
+      })();
+    });
+
+    class TrevEditor extends CustomEditor {
+      constructor(tui: TUI, editorTheme: EditorTheme, keybindings: KeybindingsManager) {
+        super(tui, editorTheme, keybindings, { paddingX: 0 });
+        state.tui = tui;
+      }
+
+      private frameColor(theme: Theme): (text: string) => string {
+        if (Date.now() < state.errorUntil) return (text) => theme.fg("error", text);
+        if (this.getText().trimStart().startsWith("!")) return (text) => theme.fg("bashMode", text);
+        if (state.working) return (text) => theme.fg("accent", text);
+        const level = pi.getThinkingLevel();
+        const token = {
+          off: "thinkingOff",
+          minimal: "thinkingMinimal",
+          low: "thinkingLow",
+          medium: "thinkingMedium",
+          high: "thinkingHigh",
+          xhigh: "thinkingXhigh",
+          max: "thinkingMax",
+        }[level] as Parameters<Theme["fg"]>[0];
+        return (text) => theme.fg(token, text);
+      }
+
+      render(width: number): string[] {
+        if (width < 10) return super.render(width);
+        const theme = ctx.ui.theme;
+        const color = this.frameColor(theme);
+        const contentWidth = Math.max(1, width - 6);
+        const base = super.render(contentWidth);
+        let divider = base.length - 1;
+        for (let index = base.length - 1; index > 0; index--) {
+          if (isRail(base[index])) {
+            divider = index;
+            break;
+          }
+        }
+        const editorLines = base.slice(1, divider);
+        const autocomplete = base.slice(divider + 1);
+        const working = state.working
+          ? theme.fg("accent", ` ${SPINNER_FRAMES[state.spinnerFrame]} working `)
+          : "";
+        const top = frameRail(theme.fg("muted", "─ prompt "), working, width, color, ["╭", "╮"]);
+        const output = [top];
+        const cursor = "\x1b[7m \x1b[0m";
+        editorLines.forEach((rawLine, index) => {
+          let line = rawLine;
+          if (index === 0 && this.getText() === "" && line.includes(cursor)) {
+            line = truncateToWidth(line.replace(cursor, `${cursor}${theme.fg("dim", "Ask Pi…")}`), contentWidth, "");
+          }
+          const gutter = index === 0 ? theme.fg("accent", "› ") : "  ";
+          output.push(`${color("│")} ${gutter}${truncateToWidth(line, contentWidth, "")} ${color("│")}`);
+        });
+        for (const line of autocomplete) {
+          output.push(`${color("│")}   ${truncateToWidth(line, contentWidth, "")} ${color("│")}`);
+        }
+        const down = scrollLabel(base[divider]);
+        output.push(frameRail(down ? theme.fg("dim", `─${down}`) : "", "", width, color, ["╰", "╯"]));
+        return output;
+      }
+    }
+
+    ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => new TrevEditor(tui, editorTheme, keybindings));
+    refreshTitle(ctx);
+  });
+
+  pi.on("message_start", (event) => {
+    if (event.message.role === "user") {
+      state.hasUserMessage = true;
+      requestRender();
+    }
+  });
+  pi.on("message_end", (event) => {
+    if (event.message.role === "assistant") {
+      const message = event.message as AssistantMessage;
+      if (message.stopReason === "error") flashError();
+    }
+  });
+  pi.on("agent_start", () => {
+    state.working = true;
+    stopSpinner();
+    state.spinnerTimer = setInterval(() => {
+      state.spinnerFrame = (state.spinnerFrame + 1) % SPINNER_FRAMES.length;
+      requestRender();
+    }, 80);
+    requestRender();
+  });
+  pi.on("agent_end", () => {
+    state.working = false;
+    stopSpinner();
+    requestRender();
+  });
+  pi.on("tool_execution_end", (event) => {
+    if (event.isError) flashError();
+  });
+  pi.on("model_select", (_event, ctx) => {
+    if (ctx.mode === "tui") refreshTitle(ctx);
+    requestRender();
+  });
+  pi.on("thinking_level_select", () => requestRender());
+  pi.on("session_info_changed", (_event, ctx) => {
+    if (ctx.mode === "tui") refreshTitle(ctx);
+  });
+  pi.on("session_shutdown", () => {
+    stopSpinner();
+    if (state.errorTimer) clearTimeout(state.errorTimer);
+    state.errorTimer = undefined;
+    if (lastContext?.mode === "tui") {
+      lastContext.ui.setHeader(undefined);
+      lastContext.ui.setFooter(undefined);
+      lastContext.ui.setEditorComponent(undefined);
+      lastContext.ui.setWorkingVisible(true);
+      lastContext.ui.setHiddenThinkingLabel();
+      lastContext.ui.setTitle("pi");
+    }
+    state.tui = undefined;
+    state.footerData = undefined;
+  });
+}
