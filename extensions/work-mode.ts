@@ -143,11 +143,7 @@ export function resolveInitialMode(
 }
 
 export function workModePrompt(mode: WorkMode): string {
-  const sandboxBoundary =
-    process.env.PI_SANDBOXED === "1"
-      ? " The Pi sandbox cannot commit or push because signing keys and forge credentials are host-only. Stop with exact host-shell commands instead of attempting either action."
-      : "";
-  return `# Session work mode: ${mode}\n\n${WORK_MODE_CONTRACTS[mode]}\n\nIf Plan mode is used, its final Plan must name this mode's stop point and Git authority so a same-session or fresh Goal handoff preserves the contract. Goal may call completion only after reaching that stop point. Follow the mode's Git authority without asking for redundant confirmation.${sandboxBoundary}`;
+  return `# Session work mode: ${mode}\n\n${WORK_MODE_CONTRACTS[mode]}\n\nIf Plan mode is used, its final Plan must name this mode's stop point and Git authority so a same-session or fresh Goal handoff preserves the contract. Goal may call completion only after reaching that stop point. Follow the mode's Git authority without asking for redundant confirmation.`;
 }
 
 function shellTokens(command: string): string[] {
@@ -271,12 +267,6 @@ export async function guardGitPush(
   ctx: Pick<WorkModeContext, "hasUI" | "mode" | "ui">,
 ): Promise<{ block: boolean; reason?: string }> {
   const isPush = isGitPushCommand(command);
-  if (process.env.PI_SANDBOXED === "1" && (isPush || isGitCommand(command, "commit"))) {
-    return {
-      block: true,
-      reason: "git commit/push is host-only because the Pi sandbox cannot access signing or forge credentials",
-    };
-  }
   if (!mode || !isPush) return { block: false };
   if (mode === "vibe-solo" || mode === "vibe-quick") return { block: false };
   if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) {

@@ -123,24 +123,6 @@ test("push guard bypasses confirmation for solo modes and guards collaborative m
   assert.deepEqual(await guardGitPush("git status", "guided", context(false) as never), { block: false });
 });
 
-test("sandbox blocks commit and push regardless of mode authority", async () => {
-  const previous = process.env.PI_SANDBOXED;
-  process.env.PI_SANDBOXED = "1";
-  const context = { hasUI: false, mode: "print", ui: {} } as never;
-  try {
-    assert.match(workModePrompt("vibe-solo"), /Stop with exact host-shell commands/);
-    for (const command of ["git commit -S -m done", "git push origin main"]) {
-      const result = await guardGitPush(command, "vibe-solo", context);
-      assert.equal(result.block, true);
-      assert.match(result.reason ?? "", /host-only/);
-    }
-    assert.deepEqual(await guardGitPush("git status", "vibe-solo", context), { block: false });
-  } finally {
-    if (previous === undefined) delete process.env.PI_SANDBOXED;
-    else process.env.PI_SANDBOXED = previous;
-  }
-});
-
 test("command selection and off update stable status lifecycle", async () => {
   const commands = new Map<string, any>();
   const handlers = new Map<string, any>();
