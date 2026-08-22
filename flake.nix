@@ -52,7 +52,10 @@
         extension-tests =
           pkgs.runCommand "pi-extension-tests"
             {
-              nativeBuildInputs = [ pkgs.nodejs ];
+              nativeBuildInputs = [
+                pkgs.esbuild
+                pkgs.nodejs
+              ];
             }
             ''
               node --experimental-strip-types --test \
@@ -60,6 +63,32 @@
                 ${./extensions}/work-mode.test.ts \
                 ${./extensions/pi-usage}/test/claude.test.ts \
                 ${./extensions/trev-pi}/layout.test.ts
+              cat >telegram-fail-closed.test.ts <<'EOF'
+              import assert from "node:assert/strict";
+              import { getTelegramAuthorizationState } from "${piExtensions}/lib/node_modules/@llblab/pi-telegram/lib/config.ts";
+
+              assert.deepEqual(getTelegramAuthorizationState(123), { kind: "deny" });
+              assert.deepEqual(getTelegramAuthorizationState(123, 123), { kind: "allow" });
+              assert.deepEqual(getTelegramAuthorizationState(456, 123), { kind: "deny" });
+              EOF
+              esbuild telegram-fail-closed.test.ts \
+                --bundle \
+                --format=esm \
+                --platform=node \
+                --outfile=telegram-fail-closed.test.mjs
+              node telegram-fail-closed.test.mjs
+              touch "$out"
+            '';
+
+        sandbox-scripts =
+          pkgs.runCommand "pi-sandbox-scripts"
+            {
+              nativeBuildInputs = [ pkgs.shellcheck ];
+            }
+            ''
+              shellcheck \
+                ${./scripts/pi-sandbox.sh} \
+                ${./scripts/pi-sandbox-check.sh}
               touch "$out"
             '';
 
@@ -116,6 +145,7 @@
           git
           nixfmt
           nodejs
+          shellcheck
           statix
         ];
       };

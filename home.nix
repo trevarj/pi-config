@@ -4,6 +4,7 @@
   piExtensions,
 }:
 {
+  includeOptionalApps ? true,
   lib,
   pkgs,
   ...
@@ -88,9 +89,35 @@ let
       }
     )
   );
+
+  piSandboxCheck = pkgs.writeShellApplication {
+    name = "pi-sandbox-check";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = builtins.readFile ./scripts/pi-sandbox-check.sh;
+  };
+
+  piSandbox = pkgs.writeShellApplication {
+    name = "pi";
+    runtimeInputs = with pkgs; [
+      coreutils
+      jq
+      systemd
+    ];
+    text =
+      builtins.replaceStrings
+        [ "@pi@" "@check@" "@env@" ]
+        [
+          (lib.getExe pkgs.pi-coding-agent)
+          (lib.getExe piSandboxCheck)
+          (lib.getExe' pkgs.coreutils "env")
+        ]
+        (builtins.readFile ./scripts/pi-sandbox.sh);
+  };
 in
 {
   home = {
+    packages = lib.optionals includeOptionalApps [ piSandbox ];
+
     file = {
       ".pi-lens/config.json".text = builtins.toJSON { widget.visible = false; };
       ".pi/agent/AGENTS.md".source = agents + "/.codex/AGENTS.md";
@@ -101,6 +128,9 @@ in
 
     # Pi rewrites settings.json in place, so install a writable generated copy.
     activation.piSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      ${lib.optionalString includeOptionalApps ''
+        run ${pkgs.coreutils}/bin/install -d -m700 "$HOME/.ollama"
+      ''}
       run ${pkgs.coreutils}/bin/install -Dm600 \
         ${settings} "$HOME/.pi/agent/settings.json"
 
@@ -109,6 +139,33 @@ in
         run ${pkgs.coreutils}/bin/install -Dm600 ${workflowSettings} "$workflow_path"
       fi
     '';
+  };
+
+  services.ollama = lib.mkIf includeOptionalApps {
+    enable = true;
+    host = "127.0.0.1";
+  };
+
+  systemd.user.services.ollama.Service = lib.mkIf includeOptionalApps {
+    LockPersonality = true;
+    NoNewPrivileges = true;
+    BindPaths = [ "%h/.ollama" ];
+    PrivateTmp = true;
+    ProtectControlGroups = true;
+    ProtectHome = "tmpfs";
+    ProtectKernelModules = true;
+    ProtectKernelTunables = true;
+    ProtectSystem = "strict";
+    ReadWritePaths = [ "%h/.ollama" ];
+    Restart = "on-failure";
+    RestartSec = 3;
+    RestrictAddressFamilies = [
+      "AF_UNIX"
+      "AF_INET"
+      "AF_INET6"
+    ];
+    RestrictNamespaces = true;
+    RestrictSUIDSGID = true;
   };
 
   xdg.configFile."pi/web-search.json".source = webSearch;

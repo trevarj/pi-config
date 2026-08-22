@@ -41,6 +41,14 @@ callPackage ../npm-bundle.nix { } {
       sed -i '/ctx\.ui\.notify(qmdInstallInstructions()/d' \
         $out/lib/node_modules/pi-memory/index.ts
 
+      # ponytail: keep this exact one-line divergence until pi-telegram gains
+      # operator-confirmed pairing upstream. A changed release fails the build
+      # instead of silently restoring first-contact ownership.
+      substituteInPlace \
+        $out/lib/node_modules/@llblab/pi-telegram/lib/config.ts \
+        --replace-fail 'return { kind: "pair", userId };' \
+        'return { kind: "deny" };'
+
       mkdir -p $out/lib/node_modules/@trevarj
       cp -r ${./pi-usage} $out/lib/node_modules/@trevarj/pi-usage
       chmod -R u+w $out/lib/node_modules/@trevarj/pi-usage

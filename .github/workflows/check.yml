@@ -1,0 +1,22 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@527f17dd63d2d60d3e5552934bc84b9a33a14d11 # v3
+      - run: nix flake check --print-build-logs
+      - run: nix build --print-build-logs .#pi-coding-agent .#pi-extensions
+      - run: nix develop -c npm --prefix agent audit --omit=dev --ignore-scripts
+      - run: nix develop -c npm --prefix extensions audit --omit=dev --ignore-scripts
