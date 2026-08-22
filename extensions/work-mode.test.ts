@@ -67,7 +67,7 @@ test("reads mode from linked parent active branch", () => {
   }
 });
 
-test("every contract preserves stop point and Git authority through Plan and Goal", () => {
+test("every contract preserves stop point and explicit Git authority through Plan and Goal", () => {
   for (const mode of WORK_MODES) {
     assert.ok(WORK_MODE_CONTRACTS[mode].length > 100);
     const prompt = workModePrompt(mode);
@@ -75,9 +75,13 @@ test("every contract preserves stop point and Git authority through Plan and Goa
     assert.match(prompt, /Goal may call completion only after reaching that stop point/);
   }
   assert.match(workModePrompt("guided"), /Do not commit, push, open a PR/);
-  assert.match(workModePrompt("vibe-solo"), /signed commit/);
+  assert.match(workModePrompt("vibe-solo"), /signed commit.*push it/);
+  assert.match(workModePrompt("vibe-solo"), /standing authority/);
   assert.match(workModePrompt("vibe-collab"), /collaborator conventions/);
+  assert.match(workModePrompt("vibe-quick"), /signed commit.*push it/);
   assert.match(workModePrompt("vibe-quick"), /smallest useful smoke check/);
+  assert.doesNotMatch(workModePrompt("vibe-solo"), /ask before push|prior explicit user request/);
+  assert.doesNotMatch(workModePrompt("vibe-quick"), /ask before push|prior explicit user request/);
 });
 
 test("detects git push without matching prose or other git commands", () => {
@@ -96,13 +100,18 @@ test("detects git push without matching prose or other git commands", () => {
   }
 });
 
-test("push guard allows confirmation, denies rejection, and blocks headless use", async () => {
+test("push guard bypasses confirmation for solo modes and guards collaborative modes", async () => {
   const context = (confirmed: boolean) => ({
     hasUI: true,
     mode: "tui" as const,
     ui: { confirm: async () => confirmed },
   });
   assert.deepEqual(await guardGitPush("git push", "guided", context(true) as never), { block: false });
+  assert.deepEqual(await guardGitPush("git push", "vibe-solo", context(false) as never), { block: false });
+  assert.deepEqual(
+    await guardGitPush("git push", "vibe-quick", { hasUI: false, mode: "print", ui: {} } as never),
+    { block: false },
+  );
   assert.match(
     (await guardGitPush("git push", "guided", context(false) as never)).reason ?? "",
     /denied by user/,

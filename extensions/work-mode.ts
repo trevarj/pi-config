@@ -52,16 +52,16 @@ type ModeState = { found: boolean; mode?: WorkMode };
 
 const MODE_LABELS: Record<WorkMode, string> = {
   guided: "guided — high-assurance collaboration",
-  "vibe-solo": "vibe-solo — own implementation through signed commit",
+  "vibe-solo": "vibe-solo — own implementation through signed commit and push",
   "vibe-collab": "vibe-collab — conform to collaborator conventions",
-  "vibe-quick": "vibe-quick — minimum low-risk change and signed commit",
+  "vibe-quick": "vibe-quick — minimum low-risk change through signed commit and push",
 };
 
 export const WORK_MODE_CONTRACTS: Record<WorkMode, string> = {
   guided: `High-assurance collaborative work. Resolve repository facts first. Ask only material product or architecture questions. Implement and fully verify, then self-review and stop ready for user code review. Do not commit, push, open a PR, post remote comments, or resolve threads unless the user explicitly requests that action.`,
-  "vibe-solo": `Own implementation end to end with strong automated verification and self-review. When a meaningful manual test exists, stop with exact manual-test steps. After the user confirms success, create a signed commit and ask before push. When no meaningful manual test exists, create a signed commit after automated verification and self-review. Do not open a PR.`,
+  "vibe-solo": `Own implementation end to end with strong automated verification and self-review. After verification, create a signed commit containing only intended task changes and push it. Do not stop or ask for commit or push confirmation; selecting this mode grants standing authority for both. Do not open a PR.`,
   "vibe-collab": `First inspect repository instructions, nearby code, history, and collaborator conventions. Conform instead of introducing new patterns. Implement, verify, self-review, and stop ready for user review. Do not commit or perform remote actions unless the user explicitly requests them.`,
-  "vibe-quick": `Make low-risk assumptions, use the minimum working solution, avoid speculative scaffolding, and run the smallest useful smoke check. In an existing Git repository, create a signed commit containing only intended task changes after the smoke check. Never initialize Git only to commit. Ask before push.`,
+  "vibe-quick": `Make low-risk assumptions, use the minimum working solution, avoid speculative scaffolding, and run the smallest useful smoke check. In an existing Git repository, create a signed commit containing only intended task changes and push it. Do not stop or ask for commit or push confirmation; selecting this mode grants standing authority for both. Never initialize Git only to commit.`,
 };
 
 export function parseWorkMode(value: string): WorkMode | "off" | undefined {
@@ -143,7 +143,7 @@ export function resolveInitialMode(
 }
 
 export function workModePrompt(mode: WorkMode): string {
-  return `# Session work mode: ${mode}\n\n${WORK_MODE_CONTRACTS[mode]}\n\nIf Plan mode is used, its final Plan must name this mode's stop point and Git authority so a same-session or fresh Goal handoff preserves the contract. Goal may call completion only after reaching that stop point. Git push always requires explicit user confirmation.`;
+  return `# Session work mode: ${mode}\n\n${WORK_MODE_CONTRACTS[mode]}\n\nIf Plan mode is used, its final Plan must name this mode's stop point and Git authority so a same-session or fresh Goal handoff preserves the contract. Goal may call completion only after reaching that stop point. Follow the mode's Git authority without asking for redundant confirmation.`;
 }
 
 function shellTokens(command: string): string[] {
@@ -263,6 +263,7 @@ export async function guardGitPush(
   ctx: Pick<WorkModeContext, "hasUI" | "mode" | "ui">,
 ): Promise<{ block: boolean; reason?: string }> {
   if (!mode || !isGitPushCommand(command)) return { block: false };
+  if (mode === "vibe-solo" || mode === "vibe-quick") return { block: false };
   if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) {
     return { block: true, reason: `git push blocked in ${mode} mode because confirmation UI is unavailable` };
   }
