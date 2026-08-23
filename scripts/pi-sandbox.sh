@@ -12,7 +12,9 @@ esac
 
 agent_dir="$HOME/.pi/agent"
 lens_dir="$HOME/.pi-lens"
-install -d -m 700 "$agent_dir" "$lens_dir"
+cache_dir="$HOME/.cache/pi-sandbox"
+gradle_home="$cache_dir/gradle"
+install -d -m 700 "$agent_dir" "$lens_dir" "$gradle_home"
 
 telegram_config="$agent_dir/telegram.json"
 if [ -e "$telegram_config" ]; then
@@ -91,6 +93,7 @@ properties=(
   --property="BindPaths=$workspace"
   --property="BindPaths=$agent_dir"
   --property="BindPaths=$lens_dir"
+  --property="BindPaths=$cache_dir"
   --property="BindPaths=$git_runtime:$sandbox_runtime"
   --property="BindReadOnlyPaths=-$HOME/.agents"
   --property="BindReadOnlyPaths=$HOME/.config/git"
@@ -146,6 +149,7 @@ properties=(
 environment=(
   "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config"
   "GNUPGHOME=$sandbox_gnupg"
+  "GRADLE_USER_HOME=$gradle_home"
   "HOME=$HOME"
   "LANG=${LANG:-en_US.UTF-8}"
   "LC_ALL=${LC_ALL:-en_US.UTF-8}"
@@ -161,7 +165,7 @@ environment=(
   "TERM=${TERM:-xterm-256color}"
   "TZ=UTC"
   "USER=$(id -un)"
-  "XDG_CACHE_HOME=/tmp/pi-cache"
+  "XDG_CACHE_HOME=$cache_dir"
   "XDG_RUNTIME_DIR=$sandbox_runtime"
   "XDG_STATE_HOME=/tmp/pi-state"
 )

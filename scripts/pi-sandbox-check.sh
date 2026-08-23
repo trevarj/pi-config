@@ -6,11 +6,12 @@ fail() {
 }
 
 [ "${PI_SANDBOXED:-}" = 1 ] || fail 'PI_SANDBOXED marker is missing'
-case "${XDG_CACHE_HOME:-}:${XDG_STATE_HOME:-}" in
-/tmp/*:/tmp/*) ;;
-*) fail 'sandbox-local cache or state path is missing' ;;
+case "${XDG_CACHE_HOME:-}:${GRADLE_USER_HOME:-}:${XDG_STATE_HOME:-}" in
+"$HOME/.cache/pi-sandbox":"$HOME/.cache/pi-sandbox/gradle":/tmp/*) ;;
+*) fail 'isolated sandbox cache or state path is missing' ;;
 esac
-mkdir -p "$XDG_CACHE_HOME" "$XDG_STATE_HOME" || fail 'sandbox-local cache or state is not writable'
+mkdir -p "$XDG_CACHE_HOME" "$GRADLE_USER_HOME" "$XDG_STATE_HOME" ||
+  fail 'sandbox-local cache or state is not writable'
 
 [ -d "$HOME/Workspace" ] && [ -r "$HOME/Workspace" ] && [ -w "$HOME/Workspace" ] ||
   fail 'Workspace is not available read/write'
@@ -56,6 +57,7 @@ for path in \
   "$HOME/.ssh/aur" \
   "$HOME/.ssh/wgkey" \
   "$HOME/.gnupg" \
+  "$HOME/.gradle" \
   "$HOME/.claude" \
   "$HOME/.codex" \
   "$HOME/.config/BraveSoftware" \
@@ -87,4 +89,4 @@ for name in \
   fi
 done
 
-printf 'Pi sandbox boundaries pass. Workspace, Pi state, read-only host GitHub CLI auth, and signing/push agents available; unrelated host credentials, D-Bus, input devices, and secret environment variables hidden.\n'
+printf 'Pi sandbox boundaries pass. Workspace, Pi state, isolated persistent caches, read-only host GitHub CLI auth, and signing/push agents available; unrelated host credentials, D-Bus, input devices, and secret environment variables hidden.\n'
