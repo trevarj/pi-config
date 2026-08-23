@@ -73,9 +73,11 @@ let
     builtins.toJSON (
       webSearchBase
       // {
+        firecrawlApiKey = "!${pkgs.coreutils}/bin/cat \"$HOME/.pi/agent/secrets/firecrawl-api-key\"";
+        firecrawlBaseUrl = "https://api.firecrawl.dev";
         searchRouting = {
           providers = [
-            "brave"
+            "firecrawl"
             "exa"
           ];
           fallbackOn = [
