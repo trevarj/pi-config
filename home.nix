@@ -57,6 +57,11 @@ let
       settingsBase
       // {
         packages = piPackages ++ [ piUsage ];
+        compaction = {
+          enabled = true;
+          reserveTokens = 72000;
+          keepRecentTokens = 20000;
+        };
         extensions = (settingsBase.extensions or [ ]) ++ [
           ./extensions/ollama-autostart.ts
           trevPi
