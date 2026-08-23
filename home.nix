@@ -59,7 +59,7 @@ let
         packages = piPackages ++ [ piUsage ];
         compaction = {
           enabled = true;
-          reserveTokens = 72000;
+          reserveTokens = 100000;
           keepRecentTokens = 20000;
         };
         extensions = (settingsBase.extensions or [ ]) ++ [
