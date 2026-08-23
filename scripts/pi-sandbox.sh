@@ -159,6 +159,7 @@ environment=(
   "SHELL=${SHELL:-/run/current-system/sw/bin/bash}"
   "SSH_AUTH_SOCK=$sandbox_ssh_agent"
   "TERM=${TERM:-xterm-256color}"
+  "TZ=UTC"
   "USER=$(id -un)"
   "XDG_CACHE_HOME=/tmp/pi-cache"
   "XDG_RUNTIME_DIR=$sandbox_runtime"
