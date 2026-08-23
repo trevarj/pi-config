@@ -22,6 +22,8 @@ rm -f -- "$workspace_probe"
   fail 'Pi agent state is not available read/write'
 [ -d "$HOME/.pi-lens" ] && [ -r "$HOME/.pi-lens" ] && [ -w "$HOME/.pi-lens" ] ||
   fail 'Pi Lens state is not available read/write'
+[ -d "$HOME/.cargo" ] && [ -r "$HOME/.cargo" ] && [ -w "$HOME/.cargo" ] ||
+  fail 'shared cargo home is not available read/write'
 [ -r "$HOME/.config/pi/web-search.json" ] || fail 'reviewed Pi web config is unavailable'
 [ -z "${GH_CONFIG_DIR:-}" ] || fail 'GitHub CLI config override is unexpectedly set'
 [ -r "$HOME/.config/gh/hosts.yml" ] && [ ! -w "$HOME/.config/gh/hosts.yml" ] ||

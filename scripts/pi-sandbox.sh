@@ -14,7 +14,10 @@ agent_dir="$HOME/.pi/agent"
 lens_dir="$HOME/.pi-lens"
 cache_dir="$HOME/.cache/pi-sandbox"
 gradle_home="$cache_dir/gradle"
-install -d -m 700 "$agent_dir" "$lens_dir" "$gradle_home"
+# Shared with the host, unlike the Gradle home above: cargo registry downloads
+# are large enough that a sandbox-local copy is worth avoiding.
+cargo_home="$HOME/.cargo"
+install -d -m 700 "$agent_dir" "$lens_dir" "$gradle_home" "$cargo_home"
 
 telegram_config="$agent_dir/telegram.json"
 if [ -e "$telegram_config" ]; then
@@ -94,6 +97,7 @@ properties=(
   --property="BindPaths=$agent_dir"
   --property="BindPaths=$lens_dir"
   --property="BindPaths=$cache_dir"
+  --property="BindPaths=$cargo_home"
   --property="BindPaths=$git_runtime:$sandbox_runtime"
   --property="BindReadOnlyPaths=-$HOME/.agents"
   --property="BindReadOnlyPaths=$HOME/.config/git"
