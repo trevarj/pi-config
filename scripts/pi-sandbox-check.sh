@@ -22,13 +22,10 @@ rm -f -- "$workspace_probe"
 [ -d "$HOME/.pi-lens" ] && [ -r "$HOME/.pi-lens" ] && [ -w "$HOME/.pi-lens" ] ||
   fail 'Pi Lens state is not available read/write'
 [ -r "$HOME/.config/pi/web-search.json" ] || fail 'reviewed Pi web config is unavailable'
-case "${GH_CONFIG_DIR:-}/" in
-"$HOME/.pi/agent/gh/") ;;
-*) fail 'sandbox-local GitHub CLI config path is missing' ;;
-esac
-[ -d "$GH_CONFIG_DIR" ] && [ -r "$GH_CONFIG_DIR" ] && [ -w "$GH_CONFIG_DIR" ] ||
-  fail 'GitHub CLI config is not available read/write'
-gh --version >/dev/null || fail 'GitHub CLI is unavailable'
+[ -z "${GH_CONFIG_DIR:-}" ] || fail 'GitHub CLI config override is unexpectedly set'
+[ -r "$HOME/.config/gh/hosts.yml" ] && [ ! -w "$HOME/.config/gh/hosts.yml" ] ||
+  fail 'host GitHub CLI credentials are not available read-only'
+gh auth status --hostname github.com >/dev/null 2>&1 || fail 'host GitHub CLI authentication is unusable'
 [ -r "$HOME/.config/git/config" ] || fail 'Git config is unavailable'
 [ -r "$HOME/.ssh/config" ] || fail 'SSH config is unavailable'
 [ -r "$HOME/.ssh/known_hosts" ] || fail 'SSH known_hosts is unavailable'
@@ -62,7 +59,7 @@ for path in \
   "$HOME/.claude" \
   "$HOME/.codex" \
   "$HOME/.config/BraveSoftware" \
-  "$HOME/.config/gh" \
+  "$HOME/.config/gh/config.yml" \
   "$HOME/.config/nym-vpn" \
   "$HOME/.local/share/keyrings" \
   "/run/user/$(id -u)/bus" \
@@ -90,4 +87,4 @@ for name in \
   fi
 done
 
-printf 'Pi sandbox boundaries pass. Workspace, Pi state, sandbox-local GitHub CLI credentials, and signing/push agents available; raw host credentials, D-Bus, input devices, and secret environment variables hidden.\n'
+printf 'Pi sandbox boundaries pass. Workspace, Pi state, read-only host GitHub CLI auth, and signing/push agents available; unrelated host credentials, D-Bus, input devices, and secret environment variables hidden.\n'

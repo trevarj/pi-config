@@ -11,9 +11,8 @@ case "$cwd/" in
 esac
 
 agent_dir="$HOME/.pi/agent"
-gh_dir="$agent_dir/gh"
 lens_dir="$HOME/.pi-lens"
-install -d -m 700 "$agent_dir" "$gh_dir" "$lens_dir"
+install -d -m 700 "$agent_dir" "$lens_dir"
 
 telegram_config="$agent_dir/telegram.json"
 if [ -e "$telegram_config" ]; then
@@ -70,7 +69,8 @@ for path in \
   "$gpg_home/trustdb.gpg" \
   "$gpg_home/private-keys-v1.d/$signing_keygrip.key" \
   "$HOME/.ssh/config" \
-  "$HOME/.ssh/known_hosts"; do
+  "$HOME/.ssh/known_hosts" \
+  "$HOME/.config/gh/hosts.yml"; do
   [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %u "$path")" = "$uid" ] ||
     git_access_fail
 done
@@ -94,6 +94,7 @@ properties=(
   --property="BindPaths=$git_runtime:$sandbox_runtime"
   --property="BindReadOnlyPaths=-$HOME/.agents"
   --property="BindReadOnlyPaths=$HOME/.config/git"
+  --property="BindReadOnlyPaths=$HOME/.config/gh/hosts.yml"
   --property="BindReadOnlyPaths=-$HOME/.gitconfig"
   --property="BindReadOnlyPaths=$HOME/.ssh/config"
   --property="BindReadOnlyPaths=$HOME/.ssh/known_hosts"
@@ -143,7 +144,6 @@ properties=(
 )
 
 environment=(
-  "GH_CONFIG_DIR=$gh_dir"
   "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config"
   "GNUPGHOME=$sandbox_gnupg"
   "HOME=$HOME"
