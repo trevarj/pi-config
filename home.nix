@@ -94,6 +94,7 @@ let
     name = "pi-sandbox-check";
     runtimeInputs = with pkgs; [
       coreutils
+      gh
       git
       gnupg
       openssh
@@ -106,6 +107,7 @@ let
     runtimeInputs = with pkgs; [
       coreutils
       gawk
+      gh
       git
       gnupg
       jq

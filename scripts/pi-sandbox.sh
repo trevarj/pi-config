@@ -11,8 +11,9 @@ case "$cwd/" in
 esac
 
 agent_dir="$HOME/.pi/agent"
+gh_dir="$agent_dir/gh"
 lens_dir="$HOME/.pi-lens"
-install -d -m 700 "$agent_dir" "$lens_dir"
+install -d -m 700 "$agent_dir" "$gh_dir" "$lens_dir"
 
 telegram_config="$agent_dir/telegram.json"
 if [ -e "$telegram_config" ]; then
@@ -142,6 +143,7 @@ properties=(
 )
 
 environment=(
+  "GH_CONFIG_DIR=$gh_dir"
   "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config"
   "GNUPGHOME=$sandbox_gnupg"
   "HOME=$HOME"

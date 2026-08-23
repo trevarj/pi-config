@@ -22,6 +22,13 @@ rm -f -- "$workspace_probe"
 [ -d "$HOME/.pi-lens" ] && [ -r "$HOME/.pi-lens" ] && [ -w "$HOME/.pi-lens" ] ||
   fail 'Pi Lens state is not available read/write'
 [ -r "$HOME/.config/pi/web-search.json" ] || fail 'reviewed Pi web config is unavailable'
+case "${GH_CONFIG_DIR:-}/" in
+"$HOME/.pi/agent/gh/") ;;
+*) fail 'sandbox-local GitHub CLI config path is missing' ;;
+esac
+[ -d "$GH_CONFIG_DIR" ] && [ -r "$GH_CONFIG_DIR" ] && [ -w "$GH_CONFIG_DIR" ] ||
+  fail 'GitHub CLI config is not available read/write'
+gh --version >/dev/null || fail 'GitHub CLI is unavailable'
 [ -r "$HOME/.config/git/config" ] || fail 'Git config is unavailable'
 [ -r "$HOME/.ssh/config" ] || fail 'SSH config is unavailable'
 [ -r "$HOME/.ssh/known_hosts" ] || fail 'SSH known_hosts is unavailable'
@@ -83,4 +90,4 @@ for name in \
   fi
 done
 
-printf 'Pi sandbox boundaries pass. Workspace, Pi state, and signing/push agents available; raw host credentials, D-Bus, input devices, and secret environment variables hidden.\n'
+printf 'Pi sandbox boundaries pass. Workspace, Pi state, sandbox-local GitHub CLI credentials, and signing/push agents available; raw host credentials, D-Bus, input devices, and secret environment variables hidden.\n'
