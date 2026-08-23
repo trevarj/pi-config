@@ -13,7 +13,7 @@
     "pi-lens": "4.0.1",
     "pi-memory": "0.4.2",
     "pi-simplify": "0.2.3",
-    "pi-subagents": "0.51.0",
+    "@tintinweb/pi-subagents": "0.18.0",
     "pi-web-access": "0.24.0"
   }
 }
