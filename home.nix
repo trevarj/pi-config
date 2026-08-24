@@ -113,6 +113,41 @@ in
       ".pi/agent/AGENTS.md".source = agents + "/.codex/AGENTS.md";
       ".pi/agent/APPEND_SYSTEM.md".source = agents + "/.pi/agent/APPEND_SYSTEM.md";
       ".pi/agent/models.json".source = ./config/models.json;
+      # Emacs-style bindings: prompt history on C-p/C-n (explicit history
+      # bindings override model cycling in the editor) and C-h as backspace;
+      # the rest of the Emacs set is already the default.
+      ".pi/agent/keybindings.json".text = builtins.toJSON {
+        "tui.editor.historyPrevious" = "ctrl+p";
+        "tui.editor.historyNext" = "ctrl+n";
+        "tui.editor.cursorLeft" = [
+          "left"
+          "ctrl+b"
+        ];
+        "tui.editor.cursorRight" = [
+          "right"
+          "ctrl+f"
+        ];
+        "tui.editor.cursorWordLeft" = [
+          "alt+left"
+          "alt+b"
+        ];
+        "tui.editor.cursorWordRight" = [
+          "alt+right"
+          "alt+f"
+        ];
+        "tui.editor.deleteCharForward" = [
+          "delete"
+          "ctrl+d"
+        ];
+        "tui.editor.deleteCharBackward" = [
+          "backspace"
+          "ctrl+h"
+        ];
+        "tui.input.newLine" = [
+          "shift+enter"
+          "ctrl+j"
+        ];
+      };
       ".pi/agent/prompts".source = agents + "/.pi/agent/prompts";
     };
 
