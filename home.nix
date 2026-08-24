@@ -68,6 +68,7 @@ let
           keepRecentTokens = 20000;
         };
         extensions = (settingsBase.extensions or [ ]) ++ [
+          ./extensions/agentwire.ts
           ./extensions/ollama-autostart.ts
           trevPi
           workMode

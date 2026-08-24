@@ -29,6 +29,7 @@ import {
 import {
   compactNumber,
   compactPluginStatus,
+  statusRank,
   fitFooterParts,
   oneLine,
   shortenPath,
@@ -279,7 +280,7 @@ export default function trevPi(pi: ExtensionAPI) {
           state.branch = footerData.getGitBranch();
           const providerCount = footerData.getAvailableProviderCount();
           const statuses = [...footerData.getExtensionStatuses().entries()]
-            .sort(([a], [b]) => a.localeCompare(b));
+            .sort(([a], [b]) => statusRank(a) - statusRank(b) || a.localeCompare(b));
           const thinking = pi.getThinkingLevel();
           const styledModel = (includeProvider: boolean) =>
             `${theme.fg("accent", "󰚩")} ${theme.fg("text", modelName(ctx, includeProvider))} ${theme.fg("dim", `· ${thinking}`)}`;

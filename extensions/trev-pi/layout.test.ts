@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   compactNumber,
   compactPluginStatus,
+  statusRank,
   fitFooterParts,
   oneLine,
   shortenPath,
@@ -101,4 +102,28 @@ test("sanitizes ANSI text and compact values", () => {
   assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Inactive"), "󰒋");
   assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Active: typescript"), "󰒋");
   assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Failed: typescript"), "LSP Failed: typescript");
+});
+
+test("compacts goal status and ranks it ahead of decorative markers", () => {
+  assert.equal(compactPluginStatus("workflow:goal", "active 12m · automatic 3/25"), "󰓾 3/25");
+  assert.equal(compactPluginStatus("workflow:goal", "paused · automatic 25/25"), "󰓾 paused 25/25");
+  assert.equal(
+    compactPluginStatus("workflow:goal", "waiting user reply · automatic 4/25"),
+    "󰓾 waiting 4/25",
+  );
+  assert.equal(compactPluginStatus("workflow:goal", "queued · automatic Unlimited"), "󰓾 queued Unlimited");
+  assert.equal(compactPluginStatus("workflow:goal", "complete"), "󰓾 ✓");
+  assert.equal(compactPluginStatus("workflow:goal", "something else"), "something else");
+  const names = ["caveman", "memory", "ponytail", "telegram", "usage", "work-mode", "workflow:goal", "pi-lens-lsp"];
+  const sorted = names.sort((a, b) => statusRank(a) - statusRank(b) || a.localeCompare(b));
+  assert.deepEqual(sorted, [
+    "workflow:goal",
+    "work-mode",
+    "memory",
+    "telegram",
+    "usage",
+    "caveman",
+    "ponytail",
+    "pi-lens-lsp",
+  ]);
 });

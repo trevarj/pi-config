@@ -28,9 +28,35 @@ export function oneLine(value: unknown): string {
   return String(value ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+// Important statuses render first; decorative mode markers go last so the
+// tail truncation eats them before anything actionable (the goal status was
+// invisible for months because "workflow:goal" sorts alphabetically last).
+const STATUS_RANKS: Record<string, number> = {
+  "workflow:goal": 0,
+  "work-mode": 1,
+  caveman: 8,
+  ponytail: 8,
+  "pi-lens-lsp": 9,
+};
+
+export function statusRank(name: string): number {
+  return STATUS_RANKS[name] ?? 5;
+}
+
 export function compactPluginStatus(name: string, status: string): string {
   const plain = oneLine(stripAnsi(status));
   if (name === "pi-lens-lsp" && /^LSP (?:Active|Inactive)(?::.*)?$/i.test(plain)) return "󰒋";
+  if (name === "workflow:goal") {
+    // pi-workflow formats: "active 12m · automatic 3/25", "paused · automatic
+    // 3/25", "waiting <reason> · automatic 3/25", "complete". Keep the state
+    // word (except the implied "active") and the turn counter.
+    if (/^complete\b/i.test(plain)) return "󰓾 ✓";
+    const counter = plain.match(/automatic (\d+\/\d+|Unlimited)/i)?.[1];
+    const state = plain.match(/^(active|queued|waiting|paused|blocked|usage|budget)/i)?.[1];
+    if (!counter && !state) return plain;
+    const label = state && state.toLowerCase() !== "active" ? ` ${state.toLowerCase()}` : "";
+    return `󰓾${label}${counter ? ` ${counter}` : ""}`;
+  }
   const level = name === "caveman"
     ? plain.match(/caveman level:\s*(\S+)/i)?.[1]?.toLowerCase()
     : name === "ponytail"

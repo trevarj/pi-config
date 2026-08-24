@@ -59,6 +59,7 @@
             }
             ''
               node --experimental-strip-types --test \
+                ${./extensions}/agentwire.test.ts \
                 ${./extensions}/ollama-autostart.test.ts \
                 ${./extensions}/work-mode.test.ts \
                 ${./extensions/pi-usage}/test/claude.test.ts \
