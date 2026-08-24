@@ -12,7 +12,12 @@
 
 let
   agents = dotfilesConfigs + "/agents";
-  piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") extensionNames;
+  # pi-lens is disabled by default: still built and pinned, but left out of
+  # the session package list. Re-enable by removing the filter, or ad hoc with
+  # `pi --extension <pi-extensions>/lib/node_modules/pi-lens`.
+  piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") (
+    builtins.filter (name: name != "pi-lens") extensionNames
+  );
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
   trevPi = ./extensions/trev-pi;
   workMode = ./extensions/work-mode.ts;
