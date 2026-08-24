@@ -97,46 +97,9 @@ let
     )
   );
 
-  piSandboxCheck = pkgs.writeShellApplication {
-    name = "pi-sandbox-check";
-    runtimeInputs = with pkgs; [
-      coreutils
-      gh
-      git
-      gnupg
-      openssh
-    ];
-    text = builtins.readFile ./scripts/pi-sandbox-check.sh;
-  };
-
-  piSandbox = pkgs.writeShellApplication {
-    name = "pi";
-    runtimeInputs = with pkgs; [
-      coreutils
-      gawk
-      gh
-      git
-      gnupg
-      jq
-      openssh
-      systemd
-    ];
-    text =
-      builtins.replaceStrings
-        [ "@pi@" "@check@" "@env@" "@bash@" ]
-        [
-          (lib.getExe pkgs.pi-coding-agent)
-          (lib.getExe piSandboxCheck)
-          (lib.getExe' pkgs.coreutils "env")
-          (lib.getExe pkgs.bash)
-        ]
-        (builtins.readFile ./scripts/pi-sandbox.sh);
-  };
 in
 {
   home = {
-    packages = lib.optionals includeOptionalApps [ piSandbox ];
-
     file = {
       ".pi-lens/config.json".text = builtins.toJSON {
         ui.compactToolLine = true;

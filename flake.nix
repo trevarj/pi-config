@@ -80,18 +80,6 @@
               touch "$out"
             '';
 
-        sandbox-scripts =
-          pkgs.runCommand "pi-sandbox-scripts"
-            {
-              nativeBuildInputs = [ pkgs.shellcheck ];
-            }
-            ''
-              shellcheck \
-                ${./scripts/pi-sandbox.sh} \
-                ${./scripts/pi-sandbox-check.sh}
-              touch "$out"
-            '';
-
         runtime-smoke = pkgs.runCommand "pi-runtime-smoke" { } ''
           export HOME="$(mktemp -d)"
           ${piAgent}/bin/pi \
