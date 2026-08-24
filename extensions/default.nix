@@ -19,7 +19,7 @@ callPackage ../npm-bundle.nix { } {
   version = "1.0.0";
   root = ./.;
 
-  npmDepsHash = "sha256-jXWsbVT653IJv6qc0LYbCO0PQX649Q0dRHRINNxmfHY=";
+  npmDepsHash = "sha256-UHTCWA6VN1OJ4oU2ZhviGh3Gd7IStujIzgOgJ1aZMIk=";
 
   extraAttrs = {
     # Every extension declares the pi core as a peer dependency. The installed

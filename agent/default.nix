@@ -8,7 +8,7 @@
 }:
 
 # nixpkgs carries pi-coding-agent, but it lags the fast-moving extension
-# ecosystem (0.75.4 against 0.84.2 here) and its build-from-git approach no
+# ecosystem (0.75.4 against 0.84.3 here) and its build-from-git approach no
 # longer works: since 0.8x the provider model catalog is generated into
 # src/providers/data by a script that fetches every provider's model list, so a
 # checkout of the tag cannot be compiled offline.
@@ -32,14 +32,14 @@
 # second step is forgotten.
 
 let
-  version = "0.84.2";
+  version = "0.84.3";
 in
 callPackage ../npm-bundle.nix { } {
   pname = "pi-coding-agent";
   inherit version;
   root = ./.;
 
-  npmDepsHash = "sha256-FYAVDYH7rk4I1Mi+QcpIMwnmMSsv7yWOceScBZyKBgU=";
+  npmDepsHash = "sha256-smUf/DUYANv7iR6r2uhhO1JQ1fKjG2Z+J4q6MI4AMfw=";
 
   extraAttrs = {
     npmDepsFetcherVersion = 2;
