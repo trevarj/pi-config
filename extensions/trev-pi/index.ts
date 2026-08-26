@@ -32,6 +32,7 @@ import {
   statusRank,
   fitFooterParts,
   oneLine,
+  promptCacheTelemetry,
   shortenPath,
   splitResourceCommands,
   stripAnsi,
@@ -191,7 +192,7 @@ function setupToolRenderers(pi: ExtensionAPI): void {
         const icon = theme.fg("accent", TOOL_ICONS[name]);
         const title = theme.fg("toolTitle", theme.bold(name));
         const subject = theme.fg("toolOutput", toolSubject(name, args));
-        return new SingleLine(`${status} ${icon} ${title}  ${subject}`);
+        return new SingleLine(`${status} ${icon}  ${title}  ${subject}`);
       },
       renderResult(result: ToolResultLike, options: { expanded: boolean; isPartial: boolean }, theme: Theme, context: any) {
         const state = context.state as {
@@ -220,7 +221,7 @@ function setupToolRenderers(pi: ExtensionAPI): void {
         const title = theme.fg("toolTitle", theme.bold(name));
         const subject = theme.fg("toolOutput", toolSubject(name, context.args));
         const detail = theme.fg(negative ? "error" : "dim", summary.text);
-        return new SingleLine(`${status} ${icon} ${title}  ${subject} · ${detail}`);
+        return new SingleLine(`${status} ${icon}  ${title}  ${subject} · ${detail}`);
       },
     } as any);
   }
@@ -291,41 +292,61 @@ export default function trevPi(pi: ExtensionAPI) {
               ? "warning"
               : "dim";
           const queue = ctx.hasPendingMessages();
-          const innerWidth = Math.max(1, width - 4);
+          const indent = width > 2 ? "  " : "";
+          const innerWidth = Math.max(1, width - visibleWidth(indent));
+          const separator = theme.fg("dim", "  ·  ");
+          const separatorWidth = visibleWidth(separator);
+          const cache = promptCacheTelemetry(
+            ctx.sessionManager.getBranch().flatMap((entry) =>
+              entry.type === "message" ? [entry.message] : []
+            ),
+            ctx.model?.provider,
+            ctx.model?.id,
+          );
           const parts = (useShortLabels: boolean): FooterPart[] => [
-            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 3 },
+            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 6 },
             {
               id: "project",
               text: `${theme.fg("accent", "")} ${theme.fg("muted", projectName(ctx))}`,
               priority: 1,
             },
             ...(state.branch ? [{ id: "branch", text: theme.fg("muted", ` ${state.branch}`), priority: 2 } as FooterPart] : []),
-            { id: "context", text: theme.fg(contextColor, contextText(ctx, !useShortLabels)), priority: 6 },
+            { id: "context", text: theme.fg(contextColor, contextText(ctx, !useShortLabels)), priority: 5 },
             ...(queue ? [{
               id: "queue",
               text: theme.fg("warning", useShortLabels ? "󰜎" : "󰜎 queued"),
+              priority: 3,
+            } as FooterPart] : []),
+            ...(cache ? [{
+              id: "cache",
+              text: theme.fg(cache.empty ? "warning" : "dim", cache.text),
               priority: 4,
             } as FooterPart] : []),
           ];
 
           const full = parts(false);
-          const fullWidth = full.reduce((sum, part) => sum + visibleWidth(part.text) + 2, -2);
-          const fitted = fitFooterParts(fullWidth <= innerWidth ? full : parts(true), innerWidth, visibleWidth);
-          const primary = truncateToWidth(fitted.map((part) => part.text).join("  "), innerWidth, "…");
+          const fullWidth = full.reduce(
+            (sum, part, index) => sum + visibleWidth(part.text) + (index ? separatorWidth : 0),
+            0,
+          );
+          const fitted = fitFooterParts(
+            fullWidth <= innerWidth ? full : parts(true),
+            innerWidth,
+            visibleWidth,
+            separatorWidth,
+          );
+          const primary = truncateToWidth(fitted.map((part) => part.text).join(separator), innerWidth, "…");
 
           const pluginValues = statuses.map(([name, text]) => compactPluginStatus(name, text));
           const pluginPrefix = theme.fg("dim", "󰐱");
           const plugins = truncateToWidth(
-            `${pluginPrefix}  ${pluginValues.length ? pluginValues.join(theme.fg("dim", " · ")) : theme.fg("dim", "—")}`,
+            `${pluginPrefix}  ${pluginValues.length ? pluginValues.join(separator) : theme.fg("dim", "—")}`,
             innerWidth,
             "…",
           );
-          const row = (content: string) =>
-            `${theme.fg("border", "│")} ${content}${" ".repeat(Math.max(0, innerWidth - visibleWidth(content)))} ${theme.fg("border", "│")}`;
-          const rail = (leftCorner: string, rightCorner: string) =>
-            theme.fg("border", `${leftCorner}${"─".repeat(Math.max(0, width - 2))}${rightCorner}`);
+          const row = (content: string) => `${indent}${truncateToWidth(content, innerWidth, "…")}`;
 
-          return [rail("╭", "╮"), row(primary), row(plugins), rail("╰", "╯")];
+          return ["", row(primary), row(plugins)];
         },
       };
     });

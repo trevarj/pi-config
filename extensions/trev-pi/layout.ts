@@ -13,9 +13,25 @@ export interface ToolResultLike {
 }
 
 export interface FooterPart {
-  id: "project" | "branch" | "model" | "queue" | "context";
+  id: "project" | "branch" | "model" | "queue" | "context" | "cache";
   text: string;
   priority: number;
+}
+
+export interface AssistantUsageLike {
+  role: string;
+  provider?: string;
+  model?: string;
+  stopReason?: string;
+  usage?: {
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+}
+
+export interface PromptCacheTelemetry {
+  text: string;
+  empty: boolean;
 }
 
 const ANSI_PATTERN = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
@@ -32,8 +48,9 @@ export function oneLine(value: unknown): string {
 // tail truncation eats them before anything actionable (the goal status was
 // invisible for months because "workflow:goal" sorts alphabetically last).
 const STATUS_RANKS: Record<string, number> = {
-  "workflow:goal": 0,
-  "work-mode": 1,
+  usage: 0,
+  "workflow:goal": 1,
+  "work-mode": 2,
   caveman: 8,
   ponytail: 8,
   "pi-lens-lsp": 9,
@@ -79,6 +96,44 @@ export function compactNumber(value: number): string {
   if (value < 1_000_000) return `${Math.round(value / 1_000)}k`;
   if (value < 10_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   return `${Math.round(value / 1_000_000)}M`;
+}
+
+export function promptCacheTelemetry(
+  messages: readonly AssistantUsageLike[],
+  provider: string | undefined,
+  model: string | undefined,
+): PromptCacheTelemetry | undefined {
+  if (!provider || !model) return undefined;
+  let latest: { read: number; write: number } | undefined;
+  let observed = false;
+
+  // Report completed provider telemetry only; older activity distinguishes
+  // an observed zero-token call from a model that never reports cache usage.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (
+      message?.role !== "assistant" ||
+      message.provider !== provider ||
+      message.model !== model ||
+      message.stopReason === "pending" ||
+      message.stopReason === "deferred"
+    ) continue;
+    const read = cacheTokens(message.usage?.cacheRead);
+    const write = cacheTokens(message.usage?.cacheWrite);
+    latest ??= { read, write };
+    if (read > 0 || write > 0) observed = true;
+  }
+
+  if (!latest || !observed) return undefined;
+  const values = [
+    ...(latest.read > 0 || latest.write === 0 ? [`${compactNumber(latest.read)} read`] : []),
+    ...(latest.write > 0 ? [`${compactNumber(latest.write)} write`] : []),
+  ];
+  return { text: `󰒍 ${values.join(" / ")}`, empty: latest.read === 0 && latest.write === 0 };
+}
+
+function cacheTokens(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 function textOutput(result: ToolResultLike): string {
@@ -181,9 +236,13 @@ export function fitFooterParts(
   parts: FooterPart[],
   width: number,
   measure: (text: string) => number = (text) => stripAnsi(text).length,
+  separatorWidth = 2,
 ): FooterPart[] {
   const kept = [...parts];
-  const totalWidth = () => kept.reduce((sum, item, index) => sum + measure(item.text) + (index ? 2 : 0), 0);
+  const totalWidth = () => kept.reduce(
+    (sum, item, index) => sum + measure(item.text) + (index ? separatorWidth : 0),
+    0,
+  );
 
   while (kept.length > 1 && totalWidth() > width) {
     const removable = kept.reduce((lowest, part) => part.priority < lowest.priority ? part : lowest);

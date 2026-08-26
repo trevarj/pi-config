@@ -6,6 +6,7 @@ import {
   statusRank,
   fitFooterParts,
   oneLine,
+  promptCacheTelemetry,
   shortenPath,
   splitResourceCommands,
   stripAnsi,
@@ -73,22 +74,76 @@ test("summarizes built-in results without hiding failures", () => {
 
 test("drops footer segments by declared priority at narrow widths", () => {
   const parts: FooterPart[] = [
+    { id: "model", text: "󰚩 model · high", priority: 6 },
     { id: "project", text: " trev-nix", priority: 1 },
     { id: "branch", text: " main", priority: 2 },
-    { id: "model", text: "󰚩 model · high", priority: 3 },
-    { id: "queue", text: "󰜎 queued", priority: 4 },
     { id: "context", text: "󰍛 12%/200k", priority: 5 },
+    { id: "queue", text: "󰜎 queued", priority: 3 },
+    { id: "cache", text: "󰒍 84k read", priority: 4 },
   ];
   const measure = (text: string) => Array.from(stripAnsi(text)).length;
+  const separatorWidth = 5;
+  const fittedWidth = (fitted: FooterPart[]) => fitted.reduce(
+    (sum, part, index) => sum + measure(part.text) + (index ? separatorWidth : 0),
+    0,
+  );
 
-  const wide = fitFooterParts(parts, 120, measure);
-  assert.equal(wide.length, 5);
+  const wide = fitFooterParts(parts, 120, measure, separatorWidth);
+  assert.equal(wide.length, 6);
+  assert.ok(fittedWidth(wide) <= 120);
 
-  const medium = fitFooterParts(parts, 80, measure);
+  const medium = fitFooterParts(parts, 80, measure, separatorWidth);
   assert.ok(medium.some((part) => part.id === "context"));
+  assert.ok(fittedWidth(medium) <= 80);
 
-  const narrow = fitFooterParts(parts, 40, measure);
-  assert.deepEqual(narrow.map((part) => part.id), ["model", "queue", "context"]);
+  const narrow = fitFooterParts(parts, 40, measure, separatorWidth);
+  assert.deepEqual(narrow.map((part) => part.id), ["model", "context"]);
+  assert.ok(fittedWidth(narrow) <= 40);
+});
+
+test("formats latest provider-reported prompt cache telemetry", () => {
+  const message = (model: string, cacheRead: number, cacheWrite: number) => ({
+    role: "assistant",
+    provider: "openai-codex",
+    model,
+    usage: { cacheRead, cacheWrite },
+  });
+
+  assert.deepEqual(promptCacheTelemetry(
+    [message("gpt-5.6", 1_500, 0)],
+    "openai-codex",
+    "gpt-5.6",
+  ), { text: "󰒍 1.5k read", empty: false });
+  assert.deepEqual(promptCacheTelemetry(
+    [message("gpt-5.6", 0, 12_000)],
+    "openai-codex",
+    "gpt-5.6",
+  ), { text: "󰒍 12k write", empty: false });
+  assert.deepEqual(promptCacheTelemetry(
+    [message("gpt-5.6", 84_000, 12_000)],
+    "openai-codex",
+    "gpt-5.6",
+  ), { text: "󰒍 84k read / 12k write", empty: false });
+  assert.deepEqual(promptCacheTelemetry(
+    [message("gpt-5.6", 84_000, 0), message("gpt-5.6", 0, 0)],
+    "openai-codex",
+    "gpt-5.6",
+  ), { text: "󰒍 0 read", empty: true });
+  assert.equal(promptCacheTelemetry(
+    [message("gpt-5.5", 84_000, 0)],
+    "openai-codex",
+    "gpt-5.6",
+  ), undefined);
+  assert.equal(promptCacheTelemetry(
+    [message("gpt-5.6", 0, 0)],
+    "openai-codex",
+    "gpt-5.6",
+  ), undefined);
+  assert.equal(promptCacheTelemetry(
+    [{ ...message("gpt-5.6", 84_000, 0), stopReason: "pending" }],
+    "openai-codex",
+    "gpt-5.6",
+  ), undefined);
 });
 
 test("sanitizes ANSI text and compact values", () => {
@@ -117,11 +172,11 @@ test("compacts goal status and ranks it ahead of decorative markers", () => {
   const names = ["caveman", "memory", "ponytail", "telegram", "usage", "work-mode", "workflow:goal", "pi-lens-lsp"];
   const sorted = names.sort((a, b) => statusRank(a) - statusRank(b) || a.localeCompare(b));
   assert.deepEqual(sorted, [
+    "usage",
     "workflow:goal",
     "work-mode",
     "memory",
     "telegram",
-    "usage",
     "caveman",
     "ponytail",
     "pi-lens-lsp",
