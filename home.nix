@@ -4,6 +4,7 @@
   piExtensions,
 }:
 {
+  herdrPiExtension ? null,
   includeOptionalApps ? true,
   lib,
   pkgs,
@@ -150,6 +151,11 @@ in
         ];
       };
       ".pi/agent/prompts".source = agents + "/.pi/agent/prompts";
+    }
+    // lib.optionalAttrs (herdrPiExtension != null) {
+      # Release-matched Herdr lifecycle/session reporter. Keep this in the
+      # auto-discovered path so `herdr integration status` sees it too.
+      ".pi/agent/extensions/herdr-agent-state.ts".source = herdrPiExtension;
     };
 
     # Pi rewrites settings.json in place, so install a writable generated copy.
