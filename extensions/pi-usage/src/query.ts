@@ -1,21 +1,28 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type ExtensionContext, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { errorMessage, fingerprintResolvedAuth, redactUsageError } from "./core.js";
 import { normalizeClaudeUsagePayload } from "./providers/claude.js";
 import { normalizeCodexBackendPayload } from "./providers/codex.js";
 import { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
+import { normalizeGoogleAntigravityPayload } from "./providers/google-antigravity.js";
 import { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 import { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
+import { normalizeXaiBillingPayload } from "./providers/xai.js";
 import type {
 	ClaudeUsagePayload,
 	CodexBackendPayload,
 	GitHubCopilotUsagePayload,
+	GoogleAntigravityPayload,
 	OpenCodeZenPayload,
 	OpenRouterKeyPayload,
 	PiModel,
 	ResolvedUsageAuth,
 	UsageProviderAdapter,
 	UsageReport,
+	XaiBillingPayload,
 } from "./types.js";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -23,6 +30,15 @@ const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const GITHUB_COPILOT_USAGE_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
+const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const GOOGLE_ANTIGRAVITY_USAGE_URL =
+	"https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+const ANTIGRAVITY_TOKEN_FILE = join(
+	homedir(),
+	".gemini",
+	"antigravity-cli",
+	"antigravity-oauth-token",
+);
 const MAX_SUCCESS_BODY_BYTES = 64 * 1024;
 const MAX_ERROR_BODY_BYTES = 4 * 1024;
 
@@ -96,6 +112,55 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 		},
 	},
 	{
+		id: "xai",
+		enabled: false,
+		displayName: "Grok",
+		semantics: { kind: "consumer-subscription", label: "Grok subscription credits" },
+		async query(auth, signal, timeoutMs) {
+			const payload = await fetchProviderJson(
+				XAI_BILLING_URL,
+				auth,
+				signal,
+				timeoutMs,
+				"xAI billing endpoint",
+			);
+			return normalizeXaiBillingPayload(payload as XaiBillingPayload, Date.now());
+		},
+	},
+	{
+		id: "google-antigravity",
+		enabled: false,
+		providerAliases: ["agy"],
+		displayName: "Antigravity",
+		semantics: { kind: "consumer-subscription", label: "Google AI subscription quota" },
+		async query(auth, signal, timeoutMs) {
+			const payload = await fetchProviderJson(
+				GOOGLE_ANTIGRAVITY_USAGE_URL,
+				{
+					...auth,
+					headers: {
+						...auth.headers,
+						"User-Agent": "antigravity/1.1.13 linux/amd64",
+						"X-Goog-Api-Client": "gl-node/22.17.0",
+						"Client-Metadata": JSON.stringify({
+							ideType: "ANTIGRAVITY",
+							platform: "PLATFORM_UNSPECIFIED",
+							pluginType: "GEMINI",
+						}),
+					},
+				},
+				signal,
+				timeoutMs,
+				"Antigravity quota endpoint",
+				{ method: "POST", body: {} },
+			);
+			return normalizeGoogleAntigravityPayload(
+				payload as GoogleAntigravityPayload,
+				Date.now(),
+			);
+		},
+	},
+	{
 		id: "opencode-go",
 		displayName: "OpenCode Go",
 		semantics: { kind: "consumer-subscription", label: "OpenCode Zen plan usage" },
@@ -115,7 +180,23 @@ export const SUPPORTED_ADAPTERS: readonly UsageProviderAdapter[] = [
 export function adapterForProvider(
 	providerId: string | undefined,
 ): UsageProviderAdapter | undefined {
-	return SUPPORTED_ADAPTERS.find((adapter) => adapter.id === providerId);
+	return SUPPORTED_ADAPTERS.find(
+		(adapter) => adapter.enabled !== false && adapterMatchesProvider(adapter, providerId),
+	);
+}
+
+export function adapterMatchesProvider(
+	adapter: UsageProviderAdapter,
+	providerId: string | undefined,
+): boolean {
+	return Boolean(
+		providerId &&
+			(adapter.id === providerId || adapter.providerAliases?.includes(providerId)),
+	);
+}
+
+export function adapterProviderIds(adapter: UsageProviderAdapter): readonly string[] {
+	return [adapter.id, ...(adapter.providerAliases ?? [])];
 }
 
 export function isStaleExtensionContextError(error: unknown): boolean {
@@ -129,21 +210,33 @@ export async function resolveUsageAuth(
 	ctx: ExtensionContext,
 	adapter: UsageProviderAdapter,
 	salt: Uint8Array = AUTH_FINGERPRINT_SALT,
-	credentialReader: StoredCredentialReader = readStoredCredential,
+	credentialReader: StoredCredentialReader | undefined = readStoredCredential,
 ): Promise<ResolvedUsageAuth | undefined> {
-	if (ctx.model?.provider === adapter.id && !hasOfficialOrigin(ctx.model, adapter.id)) {
+	const readCredential = credentialReader ?? readStoredCredential;
+	if (adapter.id === "google-antigravity") {
+		return resolveAntigravityUsageAuth(ctx, adapter, salt, readCredential);
+	}
+	if (
+		ctx.model &&
+		adapterMatchesProvider(adapter, ctx.model.provider) &&
+		!hasOfficialOrigin(ctx.model, ctx.model.provider)
+	) {
 		throw new Error(
 			`${adapter.displayName} usage cannot send a custom provider base URL credential to the official usage endpoint.`,
 		);
 	}
 
-	const model = candidateModels(ctx, adapter.id).find((candidate) =>
-		hasOfficialOrigin(candidate, adapter.id),
+	const model = candidateModels(ctx, adapterProviderIds(adapter)).find((candidate) =>
+		hasOfficialOrigin(candidate, candidate.provider),
 	);
 	if (!model) return undefined;
 	const registry = ctx.modelRegistry as unknown as UsageAuthRegistry;
 	let modelAuth: RequestAuth | undefined;
-	if (ctx.model?.provider === adapter.id && typeof registry.getApiKeyAndHeaders === "function") {
+	if (
+		ctx.model &&
+		adapterMatchesProvider(adapter, ctx.model.provider) &&
+		typeof registry.getApiKeyAndHeaders === "function"
+	) {
 		const result = await registry.getApiKeyAndHeaders(ctx.model);
 		if (!result.ok) throw new Error(redactUsageError(result.error));
 		if (authorizationFrom(result)) modelAuth = result;
@@ -151,10 +244,10 @@ export async function resolveUsageAuth(
 	if (typeof registry.getProviderAuth !== "function") {
 		throw new Error("pi-usage requires Pi 0.81.0 or newer to validate resolved provider auth.");
 	}
-	const providerResult = await registry.getProviderAuth(adapter.id);
+	const providerResult = await registry.getProviderAuth(model.provider);
 	if (
 		providerResult?.auth.baseUrl &&
-		!hasOfficialUrlOrigin(providerResult.auth.baseUrl, adapter.id)
+		!hasOfficialUrlOrigin(providerResult.auth.baseUrl, model.provider)
 	) {
 		throw new Error(
 			`${adapter.displayName} usage cannot send a proxy-resolved credential to the official usage endpoint.`,
@@ -163,7 +256,10 @@ export async function resolveUsageAuth(
 	const auth = modelAuth ?? providerResult?.auth;
 	if (!auth) return undefined;
 	if (adapter.id === "github-copilot") {
-		return resolveGitHubCopilotUsageAuth(auth, model, salt, credentialReader);
+		return resolveGitHubCopilotUsageAuth(auth, model, salt, readCredential);
+	}
+	if (adapter.id === "xai") {
+		return resolveXaiUsageAuth(auth, model, salt, readCredential);
 	}
 	const authorization = authorizationFrom(auth);
 	if (!authorization) return undefined;
@@ -198,15 +294,15 @@ export function providerIsConfigured(ctx: ExtensionContext, providerId: string):
 	try {
 		return ctx.modelRegistry.getProviderAuthStatus(providerId).configured;
 	} catch {
-		return candidateModels(ctx, providerId).length > 0;
+		return candidateModels(ctx, [providerId]).length > 0;
 	}
 }
 
-function candidateModels(ctx: ExtensionContext, providerId: string): PiModel[] {
+function candidateModels(ctx: ExtensionContext, providerIds: readonly string[]): PiModel[] {
 	const candidates: PiModel[] = [];
 	const seen = new Set<string>();
 	const add = (model: PiModel | undefined) => {
-		if (!model || model.provider !== providerId) return;
+		if (!model || !providerIds.includes(model.provider)) return;
 		const key = `${model.provider}/${model.id}`;
 		if (seen.has(key)) return;
 		seen.add(key);
@@ -394,6 +490,71 @@ function resolveGitHubCopilotUsageAuth(
 	};
 }
 
+function resolveXaiUsageAuth(
+	auth: RequestAuth,
+	model: PiModel,
+	salt: Uint8Array,
+	credentialReader: StoredCredentialReader,
+): ResolvedUsageAuth {
+	const credential = asObject(credentialReader("xai"));
+	if (credential?.type !== "oauth") {
+		throw new Error("Grok usage requires the xAI OAuth account configured through Pi /login.");
+	}
+	const storedAccess = typeof credential.access === "string" ? credential.access : undefined;
+	const resolvedAccess = bearerToken(headerValue(auth.headers, "Authorization")) ?? auth.apiKey;
+	if (!storedAccess || !resolvedAccess) {
+		throw new Error("xAI OAuth credentials were incomplete.");
+	}
+	if (storedAccess !== resolvedAccess) {
+		throw new Error("The active xAI runtime account does not match Pi's stored OAuth account.");
+	}
+	const authorization = `Bearer ${resolvedAccess}`;
+	const headers = { Authorization: authorization };
+	return {
+		apiKey: resolvedAccess,
+		headers,
+		fingerprint: fingerprintResolvedAuth({ headers }, salt),
+		secrets: [storedAccess, resolvedAccess, authorization],
+		model,
+	};
+}
+
+function resolveAntigravityUsageAuth(
+	ctx: ExtensionContext,
+	adapter: UsageProviderAdapter,
+	salt: Uint8Array,
+	credentialReader: StoredCredentialReader,
+): ResolvedUsageAuth | undefined {
+	const model = candidateModels(ctx, adapterProviderIds(adapter))[0];
+	if (!model) return undefined;
+	const credential = asObject(credentialReader("google-antigravity"));
+	const storedAccess = credential?.type === "oauth" && typeof credential.access === "string"
+		? credential.access
+		: undefined;
+	const access = storedAccess ?? readAntigravityCliAccessToken();
+	if (!access) return undefined;
+	const authorization = `Bearer ${access}`;
+	const headers = { Authorization: authorization };
+	return {
+		apiKey: access,
+		headers,
+		fingerprint: fingerprintResolvedAuth({ headers }, salt),
+		secrets: [access, authorization],
+		model,
+	};
+}
+
+function readAntigravityCliAccessToken(): string | undefined {
+	try {
+		if (statSync(ANTIGRAVITY_TOKEN_FILE).size > 64 * 1024) return undefined;
+		const payload = asObject(JSON.parse(readFileSync(ANTIGRAVITY_TOKEN_FILE, "utf8")));
+		const token = asObject(payload?.token)?.access_token;
+		return typeof token === "string" && token ? token : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function authorizationFrom(auth: RequestAuth): string | undefined {
 	return (
 		headerValue(auth.headers, "Authorization") ??
@@ -430,6 +591,7 @@ function hasOfficialUrlOrigin(value: string, providerId: string): boolean {
 		if (providerId === "anthropic") return url.origin === "https://api.anthropic.com";
 		if (providerId === "openai-codex") return url.origin === "https://chatgpt.com";
 		if (providerId === "openrouter") return url.origin === "https://openrouter.ai";
+		if (providerId === "xai") return url.origin === "https://api.x.ai";
 		if (providerId === "opencode-go") return url.origin === "https://opencode.ai";
 		if (providerId === "github-copilot") {
 			return (

@@ -61,6 +61,8 @@ export function statusRank(name: string): number {
 }
 
 export function compactPluginStatus(name: string, status: string): string {
+  // pi-usage styles only its reset suffix; preserve that intentional dim tone.
+  if (name === "usage") return oneLine(status);
   const plain = oneLine(stripAnsi(status));
   if (name === "pi-lens-lsp" && /^LSP (?:Active|Inactive)(?::.*)?$/i.test(plain)) return "󰒋";
   if (name === "workflow:goal") {

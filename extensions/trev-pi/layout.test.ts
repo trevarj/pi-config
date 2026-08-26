@@ -154,6 +154,8 @@ test("sanitizes ANSI text and compact values", () => {
   assert.equal(compactNumber(1_000_000), "1.0M");
   assert.equal(compactPluginStatus("caveman", "⠠⠄ caveman level: FULL"), "caveman ▰▰");
   assert.equal(compactPluginStatus("ponytail", "○ 🐴 ponytail: ⚡ FULL"), "ponytail ▰▰");
+  const usage = "codex 80% 5h 20% wk \x1b[38;5;8m· ↻ Tue 14:30\x1b[39m";
+  assert.equal(compactPluginStatus("usage", usage), usage);
   assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Inactive"), "󰒋");
   assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Active: typescript"), "󰒋");
   assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Failed: typescript"), "LSP Failed: typescript");

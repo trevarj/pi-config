@@ -1,11 +1,19 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sanitizeDisplayText } from "./core.js";
-import { providerIsConfigured, SUPPORTED_ADAPTERS } from "./query.js";
+import {
+	adapterMatchesProvider,
+	adapterProviderIds,
+	providerIsConfigured,
+	SUPPORTED_ADAPTERS,
+} from "./query.js";
 import type { PiModel, UsageProviderAdapter } from "./types.js";
 
 export function configuredAdapters(ctx: ExtensionContext): UsageProviderAdapter[] {
 	return SUPPORTED_ADAPTERS.filter(
-		(adapter) => adapter.id === ctx.model?.provider || providerIsConfigured(ctx, adapter.id),
+		(adapter) =>
+			adapter.enabled !== false &&
+			(adapterMatchesProvider(adapter, ctx.model?.provider) ||
+				adapterProviderIds(adapter).some((providerId) => providerIsConfigured(ctx, providerId))),
 	);
 }
 

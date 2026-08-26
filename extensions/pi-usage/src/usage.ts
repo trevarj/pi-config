@@ -21,9 +21,15 @@ import {
 	resolveCodexResetAuth,
 } from "./codex-resets.js";
 import { awaitWithDeadline, errorMessage, runWithConcurrency, UsageCache } from "./core.js";
-import { formatProviderStates, formatUsageStatusline } from "./format.js";
+import {
+	formatProviderStates,
+	formatUsageStatusline,
+	formatWeeklyResetStatus,
+} from "./format.js";
 import {
 	adapterForProvider,
+	adapterMatchesProvider,
+	AUTH_FINGERPRINT_SALT,
 	isStaleExtensionContextError,
 	queryProviderUsage,
 	resolveUsageAuth,
@@ -151,7 +157,11 @@ export default function usageExtension(
 			return;
 		}
 		const rawValue = formatUsageStatusline(outcome.state.report, model);
-		const value = rawValue ? fastRuntime.decorateStatus(model, rawValue) : undefined;
+		const status = rawValue ? fastRuntime.decorateStatus(model, rawValue) : undefined;
+		const reset = formatWeeklyResetStatus(outcome.state.report, model);
+		const value = status && reset
+			? `${status} ${ctx.ui.theme.fg("dim", `· ${reset}`)}`
+			: status;
 		if (!safeSetStatus(ctx, value)) return;
 		if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
 	};
@@ -189,7 +199,7 @@ export default function usageExtension(
 		let auth: ResolvedUsageAuth | undefined;
 		try {
 			auth = await awaitWithDeadline(
-				resolveUsageAuth(ctx, adapter),
+				resolveUsageAuth(ctx, adapter, AUTH_FINGERPRINT_SALT, credentialReader),
 				signal,
 				DEFAULT_TIMEOUT_MS,
 				`resolving ${adapter.displayName} runtime auth`,
@@ -419,7 +429,7 @@ export default function usageExtension(
 			if (!adapter) return false;
 			try {
 				const auth = await awaitWithDeadline(
-					resolveUsageAuth(ctx, adapter),
+					resolveUsageAuth(ctx, adapter, AUTH_FINGERPRINT_SALT, credentialReader),
 					signal,
 					DEFAULT_TIMEOUT_MS,
 					`revalidating ${adapter.displayName} runtime auth`,
@@ -438,7 +448,7 @@ export default function usageExtension(
 		if (!adapter) return false;
 		try {
 			const auth = await awaitWithDeadline(
-				resolveUsageAuth(ctx, adapter),
+				resolveUsageAuth(ctx, adapter, AUTH_FINGERPRINT_SALT, credentialReader),
 				signal,
 				DEFAULT_TIMEOUT_MS,
 				`revalidating ${adapter.displayName} runtime auth`,
@@ -587,7 +597,7 @@ export default function usageExtension(
 						kind: "actions",
 						title: "Select a configured provider",
 						items: configuredAdapters(ctx)
-							.filter((adapter) => adapter.id !== ctx.model?.provider)
+							.filter((adapter) => !adapterMatchesProvider(adapter, ctx.model?.provider))
 							.map((adapter) => ({
 								id: adapter.id,
 								label: adapter.displayName,
@@ -834,7 +844,7 @@ export default function usageExtension(
 					},
 					another: async () => {
 						const others = configuredAdapters(ctx).filter(
-							(adapter) => adapter.id !== ctx.model?.provider,
+							(adapter) => !adapterMatchesProvider(adapter, ctx.model?.provider),
 						);
 						if (others.length === 0) {
 							ctx.ui.notify("No other supported provider has configured runtime auth.", "info");
@@ -844,7 +854,9 @@ export default function usageExtension(
 					},
 					provider: async ({ itemId }) => {
 						const adapter = configuredAdapters(ctx).find(
-							(candidate) => candidate.id === itemId && candidate.id !== ctx.model?.provider,
+							(candidate) =>
+								candidate.id === itemId &&
+								!adapterMatchesProvider(candidate, ctx.model?.provider),
 						);
 						if (!adapter) return { kind: "back" };
 						const outcome = await runMenuOperation(
@@ -885,7 +897,9 @@ export default function usageExtension(
 										queryAdapterState(
 											ctx,
 											adapter,
-											adapter.id === currentProviderId ? "current" : "configured",
+											adapterMatchesProvider(adapter, currentProviderId)
+												? "current"
+												: "configured",
 											true,
 											workerSignal,
 										),

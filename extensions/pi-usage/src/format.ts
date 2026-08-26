@@ -30,6 +30,10 @@ export function formatUsageReport(report: UsageReport, displayState: UsageDispla
 export function formatUsageStatusline(report: UsageReport, model?: UsageModel): string | undefined {
 	if (report.providerId === "anthropic") return formatClaudeStatusline(report);
 	if (report.providerId === "openai-codex") return formatCodexStatusline(report, model);
+	if (report.providerId === "xai") return formatWeeklyPercentStatusline(report, "grok");
+	if (report.providerId === "google-antigravity") {
+		return formatWeeklyPercentStatusline(report, "agy");
+	}
 	if (report.providerId === "github-copilot") return formatGitHubCopilotStatusline(report);
 	if (report.providerId === "openrouter") {
 		const limit = report.buckets.find((bucket) => bucket.id === "key-limit");
@@ -39,6 +43,22 @@ export function formatUsageStatusline(report: UsageReport, model?: UsageModel): 
 	}
 	if (report.providerId === "opencode-go") return formatOpenCodeZenStatusline(report);
 	return undefined;
+}
+
+export function formatWeeklyResetStatus(
+	report: UsageReport,
+	model?: UsageModel,
+): string | undefined {
+	const bucket = weeklyBuckets(report, model).find((candidate) => candidate.resetsAt !== undefined);
+	if (bucket?.resetsAt === undefined) return undefined;
+	const reset = new Date(bucket.resetsAt * 1_000);
+	if (Number.isNaN(reset.getTime())) return undefined;
+	const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][reset.getDay()];
+	const time = `${reset.getHours().toString().padStart(2, "0")}:${reset
+		.getMinutes()
+		.toString()
+		.padStart(2, "0")}`;
+	return `↻ ${day} ${time}`;
 }
 
 export function formatProviderStates(states: readonly ProviderUsageState[]): string {
@@ -175,15 +195,19 @@ function formatGenericReport(lines: string[], report: UsageReport): void {
 }
 
 function formatClaudeStatusline(report: UsageReport): string | undefined {
-	const remaining = report.buckets.find((bucket) => bucket.id === "five-hour")?.remaining;
-	return remaining === undefined ? undefined : `claude ${clampPercent(remaining).toFixed(0)}% 5h`;
+	const fiveHour = report.buckets.find((bucket) => bucket.id === "five-hour")?.remaining;
+	const weekly = report.buckets.find((bucket) => bucket.id === "weekly")?.remaining;
+	const parts = ["claude"];
+	if (fiveHour !== undefined) parts.push(`${clampPercent(fiveHour).toFixed(0)}% 5h`);
+	if (weekly !== undefined) parts.push(`${clampPercent(weekly).toFixed(0)}% wk`);
+	return parts.length > 1 ? parts.join(" ") : undefined;
 }
 
 function formatCodexStatusline(report: UsageReport, model?: UsageModel): string | undefined {
 	const group = selectCodexGroup(report, model);
 	if (!group) return formatCodexCreditsStatus(report);
 	const buckets = report.buckets.filter(
-		(bucket) => (bucket.groupId ?? bucket.id) === group && bucket.id.endsWith(":primary"),
+		(bucket) => (bucket.groupId ?? bucket.id) === group,
 	);
 	const labelBucket = buckets[0];
 	const parts = [
@@ -206,6 +230,22 @@ function formatCodexCreditsStatus(report: UsageReport): string {
 	if (credits.value === "available") return "codex credits available";
 	if (credits.value === "unlimited") return "codex credits unlimited";
 	return `codex ${formatMetricValue(credits.value, "count")} credits`;
+}
+
+function formatWeeklyPercentStatusline(report: UsageReport, label: string): string | undefined {
+	const bucket = weeklyBuckets(report)[0] ?? report.buckets[0];
+	return bucket?.remaining === undefined
+		? undefined
+		: `${label} ${clampPercent(bucket.remaining).toFixed(0)}% wk`;
+}
+
+function weeklyBuckets(report: UsageReport, model?: UsageModel): UsageBucket[] {
+	const group = report.providerId === "openai-codex" ? selectCodexGroup(report, model) : undefined;
+	return report.buckets.filter((bucket) => {
+		if (group && (bucket.groupId ?? bucket.id) !== group) return false;
+		if (/week|weekly|seven/iu.test(`${bucket.id} ${bucket.label}`)) return true;
+		return bucket.windowMinutes !== undefined && bucket.windowMinutes >= 6 * 24 * 60;
+	});
 }
 
 function selectCodexGroup(report: UsageReport, model?: UsageModel): string | undefined {

@@ -119,6 +119,51 @@ test("/usage automatically queries the current runtime account and shows state p
 	assert.equal(statuses.get("usage"), "openrouter $75.00 left");
 });
 
+test("weekly reset is appended as a dim status suffix", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	globalThis.fetch = async () =>
+		new Response(
+			JSON.stringify({
+				rate_limit: {
+					primary_window: { used_percent: 20, limit_window_seconds: 18_000 },
+					secondary_window: {
+						used_percent: 60,
+						limit_window_seconds: 604_800,
+						reset_at: 1_787_764_500,
+					},
+				},
+			}),
+			{ status: 200 },
+		);
+	const mock = createMockPi();
+	usageExtension(mock.pi);
+	const command = mock.commands.get("usage");
+	assert.ok(command);
+	const { ctx, statuses } = createMockContext({
+		hasUI: true,
+		mode: "rpc",
+		model: codexModel,
+		select: async () => "Close",
+		modelRegistry: {
+			getProviderAuth: async () => ({ auth: { apiKey: "codex-token" } }),
+			getAvailable: () => [codexModel],
+			getAll: () => [codexModel],
+			getProviderAuthStatus: () => ({ configured: true }),
+			getProviderDisplayName: (provider: string) => provider,
+		},
+	});
+
+	await command.handler("", ctx);
+
+	const status = statuses.get("usage") ?? "";
+	assert.match(status, /^codex 80% 5h 40% wk /u);
+	assert.match(status, /· ↻ /u);
+	assert.match(status, /\u001b\[/u);
+});
+
 test("current Codex usage can redeem a selected reset and refresh account state", async (t) => {
 	const originalFetch = globalThis.fetch;
 	t.onTestFinished(() => {

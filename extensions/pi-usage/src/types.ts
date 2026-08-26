@@ -56,6 +56,8 @@ export interface ResolvedUsageAuth {
 
 export interface UsageProviderAdapter {
 	id: string;
+	enabled?: boolean;
+	providerAliases?: readonly string[];
 	displayName: string;
 	semantics: UsageSemantics;
 	query(auth: ResolvedUsageAuth, signal: AbortSignal, timeoutMs: number): Promise<UsageReport>;
@@ -110,4 +112,13 @@ export type CodexBackendPayload = {
 	additional_rate_limits?: unknown;
 	credits?: unknown;
 	rate_limit_reset_credits?: unknown;
+};
+
+export type XaiBillingPayload = Record<string, unknown> & {
+	config?: unknown;
+};
+
+export type GoogleAntigravityPayload = Record<string, unknown> & {
+	groups?: unknown;
+	buckets?: unknown;
 };

@@ -3,10 +3,13 @@ import { test } from "vitest";
 import {
 	formatUsageReport,
 	formatUsageStatusline,
+	formatWeeklyResetStatus,
 	normalizeClaudeUsagePayload,
 	normalizeCodexBackendPayload,
 	normalizeGitHubCopilotUsagePayload,
+	normalizeGoogleAntigravityPayload,
 	normalizeOpenRouterKeyPayload,
+	normalizeXaiBillingPayload,
 } from "../src/index.js";
 
 test("Claude adapter normalizes five-hour and weekly subscription limits", () => {
@@ -38,7 +41,69 @@ test("Claude adapter normalizes five-hour and weekly subscription limits", () =>
 			resetsAt: 1_787_547_599,
 		},
 	]);
-	assert.equal(formatUsageStatusline(report), "claude 97% 5h");
+	assert.equal(formatUsageStatusline(report), "claude 97% 5h 20% wk");
+	assert.equal(formatWeeklyResetStatus(report), "↻ Mon 04:59");
+});
+
+test("Grok adapter normalizes weekly subscription credits and reset time", () => {
+	const report = normalizeXaiBillingPayload(
+		{
+			config: {
+				creditUsagePercent: 12.5,
+				currentPeriod: { end: "2026-08-25T14:30:00Z" },
+			},
+		},
+		1_000,
+	);
+
+	assert.deepEqual(report.buckets, [
+		{
+			id: "weekly",
+			label: "Weekly credit pool",
+			used: 12.5,
+			remaining: 87.5,
+			limit: 100,
+			unit: "percent",
+			resetsAt: 1_787_668_200,
+		},
+	]);
+	assert.equal(formatUsageStatusline(report), "grok 88% wk");
+	assert.equal(formatWeeklyResetStatus(report), "↻ Tue 14:30");
+});
+
+test("Antigravity adapter chooses most-used weekly quota and reset time", () => {
+	const report = normalizeGoogleAntigravityPayload(
+		{
+			groups: [
+				{
+					buckets: [
+						{
+							window: "7d",
+							remainingFraction: 0.75,
+							resetTime: "2026-08-26T09:15:00Z",
+						},
+						{ window: "seven-day", remainingFraction: 0.9 },
+					],
+				},
+			],
+		},
+		1_000,
+	);
+
+	assert.equal(report.providerId, "google-antigravity");
+	assert.deepEqual(report.buckets, [
+		{
+			id: "weekly",
+			label: "Weekly quota",
+			used: 25,
+			remaining: 75,
+			limit: 100,
+			unit: "percent",
+			resetsAt: 1_787_735_700,
+		},
+	]);
+	assert.equal(formatUsageStatusline(report), "agy 75% wk");
+	assert.equal(formatWeeklyResetStatus(report), "↻ Wed 09:15");
 });
 
 test("GitHub Copilot adapter normalizes legacy premium request quota", () => {
@@ -352,7 +417,11 @@ test("Codex adapter preserves windows, credits, and model-specific statusline bu
 			plan_type: "pro",
 			rate_limit: {
 				primary_window: { used_percent: 60, limit_window_seconds: 18_000, reset_at: 100 },
-				secondary_window: { used_percent: 80, limit_window_seconds: 604_800 },
+				secondary_window: {
+					used_percent: 80,
+					limit_window_seconds: 604_800,
+					reset_after_seconds: 7_200,
+				},
 			},
 			credits: { has_credits: true, unlimited: false, balance: "12" },
 			rate_limit_reset_credits: { available_count: 2 },
@@ -378,6 +447,8 @@ test("Codex adapter preserves windows, credits, and model-specific statusline bu
 	assert.equal(report.metrics.find((metric) => metric.id === "reset-credits")?.value, 2);
 	assert.match(formatUsageReport(report, "current"), /5h limit:/);
 	assert.match(formatUsageReport(report, "current"), /Weekly limit:/);
+	assert.equal(report.buckets.find((bucket) => bucket.id === "codex:secondary")?.resetsAt, 7_203);
+	assert.equal(formatUsageStatusline(report), "codex 40% 5h 20% wk");
 	assert.equal(
 		formatUsageStatusline(report, {
 			id: "gpt-5.3-codex-spark",

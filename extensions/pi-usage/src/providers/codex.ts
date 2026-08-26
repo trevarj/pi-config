@@ -6,7 +6,7 @@ export function normalizeCodexBackendPayload(
 	capturedAt: number,
 ): UsageReport {
 	const buckets: UsageBucket[] = [];
-	normalizeRateLimitGroup(buckets, "codex", "Codex", payload.rate_limit, false);
+	normalizeRateLimitGroup(buckets, "codex", "Codex", payload.rate_limit, false, capturedAt);
 
 	const additional = Array.isArray(payload.additional_rate_limits)
 		? payload.additional_rate_limits
@@ -22,6 +22,7 @@ export function normalizeCodexBackendPayload(
 				asString(value.limit_name) ?? id,
 				value.rate_limit,
 				true,
+				capturedAt,
 			);
 		} catch {
 			// Optional provider-specific buckets must not hide otherwise useful primary data.
@@ -80,6 +81,7 @@ function normalizeRateLimitGroup(
 	groupLabel: string,
 	raw: unknown,
 	optional: boolean,
+	capturedAt: number,
 ): void {
 	if (raw === undefined || raw === null) return;
 	const details = asObject(raw);
@@ -87,8 +89,8 @@ function normalizeRateLimitGroup(
 		if (optional) return;
 		throw new Error("Codex rate limit was not an object.");
 	}
-	addWindow(buckets, groupId, groupLabel, "primary", details.primary_window);
-	addWindow(buckets, groupId, groupLabel, "secondary", details.secondary_window);
+	addWindow(buckets, groupId, groupLabel, "primary", details.primary_window, capturedAt);
+	addWindow(buckets, groupId, groupLabel, "secondary", details.secondary_window, capturedAt);
 }
 
 function addWindow(
@@ -97,6 +99,7 @@ function addWindow(
 	groupLabel: string,
 	position: "primary" | "secondary",
 	raw: unknown,
+	capturedAt: number,
 ): void {
 	if (raw === undefined || raw === null) return;
 	const value = asObject(raw);
@@ -104,7 +107,12 @@ function addWindow(
 	const used = asNumber(value.used_percent);
 	if (used === undefined) return;
 	const seconds = asNumber(value.limit_window_seconds);
-	const resetsAt = asNumber(value.reset_at);
+	const resetAfter = asNumber(value.reset_after_seconds);
+	const resetsAt = asNumber(value.reset_at) ?? (
+		resetAfter !== undefined && resetAfter >= 0
+			? Math.floor(capturedAt / 1_000 + resetAfter)
+			: undefined
+	);
 	buckets.push({
 		id: `${groupId}:${position}`,
 		label: position === "primary" ? "Primary limit" : "Secondary limit",

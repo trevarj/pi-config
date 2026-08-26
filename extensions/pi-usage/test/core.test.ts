@@ -3,6 +3,7 @@ import { test } from "vitest";
 import { createMockContext } from "../../../test/support.js";
 import type { UsageReport } from "../src/index.js";
 import {
+	adapterForProvider,
 	awaitWithDeadline,
 	fingerprintResolvedAuth,
 	queryProviderUsage,
@@ -272,6 +273,72 @@ test("GitHub Copilot usage uses the matching Pi OAuth refresh token", async () =
 			})),
 		/Enterprise/iu,
 	);
+});
+
+test("Grok usage accepts only matching Pi OAuth credentials", async () => {
+	assert.equal(adapterForProvider("xai"), undefined);
+	const adapter = SUPPORTED_ADAPTERS.find((candidate) => candidate.id === "xai");
+	assert.equal(adapter?.enabled, false);
+	assert.ok(adapter);
+	const model = {
+		id: "grok-4",
+		name: "Grok 4",
+		provider: "xai",
+		baseUrl: "https://api.x.ai/v1",
+	};
+	const { ctx } = createMockContext({
+		model,
+		modelRegistry: {
+			getProviderAuth: async () => ({ auth: { apiKey: "oauth-token", baseUrl: model.baseUrl } }),
+			getAvailable: () => [model],
+			getAll: () => [model],
+		},
+	});
+	const credential = { type: "oauth", access: "oauth-token" };
+	const auth = await resolveUsageAuth(ctx, adapter, new Uint8Array(32), () => credential);
+	assert.deepEqual(auth?.headers, { Authorization: "Bearer oauth-token" });
+
+	await assert.rejects(
+		() => resolveUsageAuth(ctx, adapter, new Uint8Array(32), () => ({ type: "api_key" })),
+		/OAuth/iu,
+	);
+	await assert.rejects(
+		() =>
+			resolveUsageAuth(ctx, adapter, new Uint8Array(32), () => ({
+				...credential,
+				access: "another-token",
+			})),
+		/does not match/iu,
+	);
+});
+
+test("Antigravity usage maps the agy provider to its stored OAuth account", async () => {
+	assert.equal(adapterForProvider("agy"), undefined);
+	const adapter = SUPPORTED_ADAPTERS.find(
+		(candidate) => candidate.id === "google-antigravity",
+	);
+	assert.equal(adapter?.enabled, false);
+	assert.ok(adapter);
+	const model = {
+		id: "gemini",
+		name: "Gemini",
+		provider: "agy",
+		baseUrl: "local",
+	};
+	const { ctx } = createMockContext({
+		model,
+		modelRegistry: {
+			getAvailable: () => [model],
+			getAll: () => [model],
+		},
+	});
+	const auth = await resolveUsageAuth(ctx, adapter, new Uint8Array(32), (providerId) =>
+		providerId === "google-antigravity"
+			? { type: "oauth", access: "google-token" }
+			: undefined,
+	);
+	assert.deepEqual(auth?.headers, { Authorization: "Bearer google-token" });
+	assert.equal(auth?.model.provider, "agy");
 });
 
 test("provider cancellation preserves AbortError identity", async () => {

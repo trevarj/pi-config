@@ -31,14 +31,23 @@ export {
 	sanitizeDisplayText,
 	UsageCache,
 } from "./core.js";
-export { formatProviderStates, formatUsageReport, formatUsageStatusline } from "./format.js";
+export {
+	formatProviderStates,
+	formatUsageReport,
+	formatUsageStatusline,
+	formatWeeklyResetStatus,
+} from "./format.js";
 export { normalizeClaudeUsagePayload } from "./providers/claude.js";
 export { normalizeCodexBackendPayload } from "./providers/codex.js";
 export { normalizeGitHubCopilotUsagePayload } from "./providers/github-copilot.js";
+export { normalizeGoogleAntigravityPayload } from "./providers/google-antigravity.js";
 export { normalizeOpenCodeZenPayload } from "./providers/opencode-zen.js";
 export { normalizeOpenRouterKeyPayload } from "./providers/openrouter.js";
+export { normalizeXaiBillingPayload } from "./providers/xai.js";
 export {
 	adapterForProvider,
+	adapterMatchesProvider,
+	adapterProviderIds,
 	isStaleExtensionContextError,
 	providerIsConfigured,
 	queryProviderUsage,
