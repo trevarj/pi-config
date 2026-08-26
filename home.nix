@@ -70,6 +70,7 @@ let
         };
         extensions = (settingsBase.extensions or [ ]) ++ [
           ./extensions/agentwire.ts
+          ./extensions/herdr-waiting.ts
           ./extensions/ollama-autostart.ts
           trevPi
           workMode

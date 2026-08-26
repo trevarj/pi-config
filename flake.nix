@@ -60,6 +60,7 @@
             ''
               node --experimental-strip-types --test \
                 ${./extensions}/agentwire.test.ts \
+                ${./extensions}/herdr-waiting.test.ts \
                 ${./extensions}/ollama-autostart.test.ts \
                 ${./extensions}/work-mode.test.ts \
                 ${./extensions/pi-usage}/test/claude.test.ts \
@@ -84,6 +85,7 @@
         runtime-smoke = pkgs.runCommand "pi-runtime-smoke" { } ''
           export HOME="$(mktemp -d)"
           ${piAgent}/bin/pi \
+            --extension ${./extensions}/herdr-waiting.ts \
             --extension ${./extensions}/ollama-autostart.ts \
             --extension ${./extensions/trev-pi} \
             --extension ${./extensions}/work-mode.ts \
