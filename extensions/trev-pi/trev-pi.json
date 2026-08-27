@@ -30,7 +30,7 @@
     "searchMatchBg": "yellow",
     "searchMatchText": "black",
     "userMessageBg": "",
-    "userMessageText": "",
+    "userMessageText": "green",
     "customMessageBg": "",
     "customMessageText": "",
     "customMessageLabel": "magenta",

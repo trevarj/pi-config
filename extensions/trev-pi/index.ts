@@ -27,6 +27,7 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
+  backgroundLine,
   branchTelemetry,
   compactPluginStatus,
   contextTelemetry,
@@ -82,28 +83,6 @@ class SingleLine implements Component {
 
 function emptyComponent(): Component {
   return new Container();
-}
-
-function frameRail(
-  left: string,
-  right: string,
-  width: number,
-  color: (text: string) => string,
-  corners: [string, string],
-): string {
-  if (width <= 0) return "";
-  if (width === 1) return color(corners[0]);
-  const available = width - 2;
-  let leftText = left;
-  let rightText = right;
-  while (visibleWidth(leftText) + visibleWidth(rightText) + 1 > available && visibleWidth(rightText) > 0) {
-    rightText = truncateToWidth(rightText, visibleWidth(rightText) - 1, "");
-  }
-  while (visibleWidth(leftText) + visibleWidth(rightText) + 1 > available && visibleWidth(leftText) > 0) {
-    leftText = truncateToWidth(leftText, visibleWidth(leftText) - 1, "");
-  }
-  const fill = "─".repeat(Math.max(0, available - visibleWidth(leftText) - visibleWidth(rightText)));
-  return color(corners[0]) + leftText + color(fill) + rightText + color(corners[1]);
 }
 
 function isRail(line: string): boolean {
@@ -431,7 +410,7 @@ export default function trevPi(pi: ExtensionAPI) {
         state.tui = tui;
       }
 
-      private frameColor(theme: Theme): (text: string) => string {
+      private promptColor(theme: Theme): (text: string) => string {
         if (Date.now() < state.errorUntil) return (text) => theme.fg("error", text);
         if (this.getText().trimStart().startsWith("!")) return (text) => theme.fg("bashMode", text);
         if (state.working) return (text) => theme.fg("accent", text);
@@ -451,7 +430,7 @@ export default function trevPi(pi: ExtensionAPI) {
       render(width: number): string[] {
         if (width < 10) return super.render(width);
         const theme = ctx.ui.theme;
-        const color = this.frameColor(theme);
+        const color = this.promptColor(theme);
         const contentWidth = Math.max(1, width - 4);
         const base = super.render(contentWidth);
         let divider = base.length - 1;
@@ -463,25 +442,31 @@ export default function trevPi(pi: ExtensionAPI) {
         }
         const editorLines = base.slice(1, divider);
         const autocomplete = base.slice(divider + 1);
-        const working = state.working
-          ? theme.fg("accent", ` ${SPINNER_FRAMES[state.spinnerFrame]} working `)
-          : "";
-        const top = frameRail("", working, width, color, ["╭", "╮"]);
-        const output = [top];
+        const output: string[] = [];
+        const panel = (line: string) => {
+          const clipped = truncateToWidth(line, width, "");
+          const padded = `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
+          return backgroundLine(padded, theme.getBgAnsi("selectedBg"));
+        };
         const cursor = "\x1b[7m \x1b[0m";
         editorLines.forEach((rawLine, index) => {
           let line = rawLine;
           if (index === 0 && this.getText() === "" && line.includes(cursor)) {
             line = truncateToWidth(line.replace(cursor, `${cursor}${theme.fg("dim", "Ask Pi…")}`), contentWidth, "");
           }
-          const gutter = index === 0 ? theme.fg("accent", "› ") : "  ";
-          output.push(`  ${gutter}${truncateToWidth(line, contentWidth, "")}`);
+          const gutter = index === 0
+            ? color(state.working ? `${SPINNER_FRAMES[state.spinnerFrame]} ` : "› ")
+            : "  ";
+          output.push(panel(`  ${gutter}${truncateToWidth(line, contentWidth, "")}`));
         });
         for (const line of autocomplete) {
-          output.push(`    ${truncateToWidth(line, contentWidth, "")}`);
+          output.push(panel(`    ${truncateToWidth(line, contentWidth, "")}`));
         }
         const down = scrollLabel(base[divider]);
-        output.push(frameRail(down ? theme.fg("dim", `─${down}`) : "", "", width, color, ["╰", "╯"]));
+        if (down) {
+          const label = theme.fg("dim", down.trim());
+          output.push(panel(`    ${label}${" ".repeat(Math.max(0, width - 4 - visibleWidth(label)))}`));
+        }
         return output;
       }
     }

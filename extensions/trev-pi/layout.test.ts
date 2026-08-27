@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  backgroundLine,
   branchTelemetry,
   compactNumber,
   compactPluginStatus,
@@ -160,6 +161,10 @@ test("refreshes dirty state only after successful worktree-affecting tools", () 
 
 test("sanitizes ANSI text and compact values", () => {
   assert.equal(stripAnsi("\x1b[31mred\x1b[0m"), "red");
+  assert.equal(
+    backgroundLine("x\x1b[0my\x1b[49mz", "\x1b[48;5;8m"),
+    "\x1b[48;5;8mx\x1b[0m\x1b[48;5;8my\x1b[49m\x1b[48;5;8mz\x1b[49m",
+  );
   assert.equal(oneLine("one\n\ttwo"), "one two");
   assert.equal(compactNumber(999), "999");
   assert.equal(compactNumber(1_500), "1.5k");

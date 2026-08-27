@@ -40,6 +40,12 @@ export function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, "");
 }
 
+export function backgroundLine(text: string, background: string): string {
+  if (!background) return text;
+  const painted = text.replace(/\x1b\[(?:0|49)m/gu, (reset) => `${reset}${background}`);
+  return `${background}${painted}\x1b[49m`;
+}
+
 export function oneLine(value: unknown): string {
   return String(value ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
 }
