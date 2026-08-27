@@ -18,6 +18,12 @@ const codexModel = {
 	provider: "openai-codex",
 	baseUrl: "https://chatgpt.com/backend-api",
 };
+const claudeModel = {
+	id: "claude-sonnet",
+	name: "Claude Sonnet",
+	provider: "anthropic",
+	baseUrl: "https://api.anthropic.com",
+};
 
 async function settle(): Promise<void> {
 	await new Promise<void>((resolve) => setImmediate(resolve));
@@ -679,6 +685,59 @@ test("session shutdown aborts usage action and provider selectors", async (t) =>
 	assert.equal(dialogSignals.length, 2);
 	assert.equal(dialogSignals[0], dialogSignals[1]);
 	assert.equal(dialogSignals[0]?.aborted, true);
+});
+
+test("automatic status shows every configured provider with current first", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	globalThis.fetch = async (input) => {
+		if (String(input).includes("anthropic.com")) {
+			return new Response(JSON.stringify({
+				five_hour: { utilization: 10 },
+				seven_day: { utilization: 30 },
+			}), { status: 200 });
+		}
+		return new Response(JSON.stringify({
+			rate_limit: {
+				primary_window: { used_percent: 20, limit_window_seconds: 18_000 },
+				secondary_window: { used_percent: 60, limit_window_seconds: 604_800 },
+			},
+		}), { status: 200 });
+	};
+	const mock = createMockPi();
+	usageExtension(mock.pi);
+	const { ctx, statuses } = createMockContext({
+		model: codexModel,
+		modelRegistry: {
+			getProviderAuth: async (provider: string) => ({ auth: { apiKey: `${provider}-key` } }),
+			getAvailable: () => [codexModel, claudeModel],
+			getAll: () => [codexModel, claudeModel],
+			getProviderAuthStatus: () => ({ configured: true }),
+			getProviderDisplayName: (provider: string) => provider,
+		},
+	});
+	const plainStatus = () => (statuses.get("usage") ?? "").replace(/\u001b\[[0-9;]*m/gu, "");
+
+	mock.events.get("session_start")?.[0]?.({}, ctx);
+	for (let attempt = 0; attempt < 10 && plainStatus().includes("checking"); attempt += 1) {
+		await settle();
+	}
+	assert.equal(
+		plainStatus(),
+		"codex 80% 5h 40% wk · claude 90% 5h 70% wk",
+	);
+
+	Object.assign(ctx, { model: claudeModel });
+	mock.events.get("model_select")?.[0]?.({ model: claudeModel }, ctx);
+	for (let attempt = 0; attempt < 10 && plainStatus().includes("checking"); attempt += 1) {
+		await settle();
+	}
+	assert.equal(
+		plainStatus(),
+		"claude 90% 5h 70% wk · codex 80% 5h 40% wk",
+	);
 });
 
 test("automatic provider failures back off instead of retrying every turn", async (t) => {

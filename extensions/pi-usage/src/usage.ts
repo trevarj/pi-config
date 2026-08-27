@@ -115,14 +115,6 @@ export default function usageExtension(
 		}
 	};
 
-	const clearStatus = (ctx: ExtensionContext) => {
-		statusGeneration += 1;
-		statusController?.abort();
-		statusController = undefined;
-		clearStatusTimer();
-		safeSetStatus(ctx, undefined);
-	};
-
 	const scheduleStatusRefresh = (ctx: ExtensionContext, model: PiModel) => {
 		clearStatusTimer();
 		const generation = statusGeneration;
@@ -134,36 +126,51 @@ export default function usageExtension(
 		statusRefreshTimer.unref?.();
 	};
 
+	const statusPart = (
+		ctx: ExtensionContext,
+		outcome: QueryOutcome,
+		model: PiModel | undefined,
+		current: boolean,
+	): string | undefined => {
+		if (outcome.state.status === "unsupported") return undefined;
+		if (outcome.state.status !== "ready") {
+			if (!current) return undefined;
+			return outcome.state.status === "auth-unavailable" ? "auth unavailable" : "usage error";
+		}
+		const rawValue = formatUsageStatusline(outcome.state.report, model);
+		const status = rawValue && current
+			? fastRuntime.decorateStatus(model, rawValue)
+			: rawValue;
+		const reset = formatWeeklyResetStatus(outcome.state.report, model);
+		return status && reset
+			? `${status} ${ctx.ui.theme.fg("dim", `· ${reset}`)}`
+			: status;
+	};
+
 	const publishStatus = (
 		ctx: ExtensionContext,
 		outcome: QueryOutcome,
 		model: PiModel,
 		shouldSchedule: boolean,
 	) => {
-		if (outcome.state.status === "unsupported") {
-			clearStatusTimer();
-			safeSetStatus(ctx, undefined);
-			return;
-		}
-		if (outcome.state.status !== "ready") {
-			if (
-				safeSetStatus(
-					ctx,
-					outcome.state.status === "auth-unavailable" ? "auth unavailable" : "usage error",
-				)
-			) {
-				if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
-			}
-			return;
-		}
-		const rawValue = formatUsageStatusline(outcome.state.report, model);
-		const status = rawValue ? fastRuntime.decorateStatus(model, rawValue) : undefined;
-		const reset = formatWeeklyResetStatus(outcome.state.report, model);
-		const value = status && reset
-			? `${status} ${ctx.ui.theme.fg("dim", `· ${reset}`)}`
-			: status;
+		const value = statusPart(ctx, outcome, model, true);
 		if (!safeSetStatus(ctx, value)) return;
 		if (shouldSchedule && sessionActive) scheduleStatusRefresh(ctx, model);
+	};
+
+	const publishCombinedStatus = (
+		ctx: ExtensionContext,
+		current: QueryOutcome,
+		configured: QueryOutcome[],
+		model: PiModel | undefined,
+	) => {
+		const values = [
+			statusPart(ctx, current, model, true),
+			...configured.map((outcome) => statusPart(ctx, outcome, undefined, false)),
+		].filter((value): value is string => Boolean(value));
+		const separator = ctx.ui.theme.fg("dim", " · ");
+		if (!safeSetStatus(ctx, values.length > 0 ? values.join(separator) : undefined)) return;
+		if (sessionActive && model) scheduleStatusRefresh(ctx, model);
 	};
 
 	const invalidateProviderState = (providerId: string) => {
@@ -346,13 +353,6 @@ export default function usageExtension(
 		model: PiModel | undefined,
 		force: boolean,
 	) => {
-		const adapter = adapterForProvider(model?.provider);
-		if (!adapter || !model) {
-			const providerId = model?.provider ?? "none";
-			transitionCurrentIdentity(`unsupported:${providerId}`, providerId);
-			clearStatus(ctx);
-			return;
-		}
 		statusGeneration += 1;
 		const generation = statusGeneration;
 		statusController?.abort();
@@ -361,15 +361,38 @@ export default function usageExtension(
 		activeControllers.add(controller);
 		try {
 			if (!safeSetStatus(ctx, "checking")) return;
-			const outcome = await queryCurrentState(ctx, model, force, controller.signal);
+			const otherAdapters = configuredAdapters(ctx).filter(
+				(adapter) => !adapterMatchesProvider(adapter, model?.provider),
+			);
+			const [current, settled] = await Promise.all([
+				queryCurrentState(ctx, model, force, controller.signal),
+				runWithConcurrency(
+					otherAdapters,
+					ALL_PROVIDER_CONCURRENCY,
+					(adapter, _index, signal) =>
+						queryAdapterState(ctx, adapter, "configured", force, signal),
+					controller.signal,
+				),
+			]);
 			if (!sessionActive || generation !== statusGeneration || controller.signal.aborted) return;
-			if (!(await outcomeStillCurrent(ctx, model, generation, outcome, controller.signal))) {
+			if (!(await outcomeStillCurrent(ctx, model, generation, current, controller.signal))) {
 				if (sessionActive && generation === statusGeneration) {
 					queueMicrotask(() => startStatusRefresh(ctx, ctx.model, false));
 				}
 				return;
 			}
-			publishStatus(ctx, outcome, model, true);
+			const configured: QueryOutcome[] = [];
+			for (let index = 0; index < settled.length; index += 1) {
+				const result = settled[index];
+				if (result?.status !== "fulfilled" || result.value.state.status !== "ready") continue;
+				const adapter = otherAdapters[index];
+				if (
+					adapter &&
+					(await configuredOutcomeStillCurrent(ctx, adapter, result.value, controller.signal))
+				) configured.push(result.value);
+			}
+			if (!sessionActive || generation !== statusGeneration || controller.signal.aborted) return;
+			publishCombinedStatus(ctx, current, configured, model);
 		} finally {
 			activeControllers.delete(controller);
 			if (statusController === controller) statusController = undefined;
@@ -458,6 +481,27 @@ export default function usageExtension(
 				modelIdentity(ctx.model) === modelIdentity(model) &&
 				auth?.fingerprint === outcome.fingerprint
 			);
+		} catch (error) {
+			if (isAbortError(error) || isStaleExtensionContextError(error)) throw error;
+			return false;
+		}
+	};
+
+	const configuredOutcomeStillCurrent = async (
+		ctx: ExtensionContext,
+		adapter: UsageProviderAdapter,
+		outcome: QueryOutcome,
+		signal: AbortSignal,
+	): Promise<boolean> => {
+		if (!outcome.fingerprint) return false;
+		try {
+			const auth = await awaitWithDeadline(
+				resolveUsageAuth(ctx, adapter, AUTH_FINGERPRINT_SALT, credentialReader),
+				signal,
+				DEFAULT_TIMEOUT_MS,
+				`revalidating ${adapter.displayName} runtime auth`,
+			);
+			return auth?.fingerprint === outcome.fingerprint;
 		} catch (error) {
 			if (isAbortError(error) || isStaleExtensionContextError(error)) throw error;
 			return false;
@@ -945,6 +989,9 @@ export default function usageExtension(
 		} finally {
 			controller.abort(new DOMException("Usage menu closed", "AbortError"));
 			activeControllers.delete(controller);
+			if (sessionActive && statusGeneration === menuGeneration) {
+				startStatusRefresh(ctx, ctx.model, false);
+			}
 		}
 	};
 
