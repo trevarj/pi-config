@@ -142,9 +142,10 @@ export default function usageExtension(
 			? fastRuntime.decorateStatus(model, rawValue)
 			: rawValue;
 		const reset = formatWeeklyResetStatus(outcome.state.report, model);
-		return status && reset
+		const value = status && reset
 			? `${status} ${ctx.ui.theme.fg("dim", `· ${reset}`)}`
 			: status;
+		return value && !current ? ctx.ui.theme.fg("dim", value) : value;
 	};
 
 	const publishStatus = (
@@ -168,7 +169,7 @@ export default function usageExtension(
 			statusPart(ctx, current, model, true),
 			...configured.map((outcome) => statusPart(ctx, outcome, undefined, false)),
 		].filter((value): value is string => Boolean(value));
-		const separator = ctx.ui.theme.fg("dim", " · ");
+		const separator = ctx.ui.theme.fg("dim", " │ ");
 		if (!safeSetStatus(ctx, values.length > 0 ? values.join(separator) : undefined)) return;
 		if (sessionActive && model) scheduleStatusRefresh(ctx, model);
 	};

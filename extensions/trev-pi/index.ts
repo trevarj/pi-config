@@ -27,12 +27,14 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
-  compactNumber,
+  branchTelemetry,
   compactPluginStatus,
+  contextTelemetry,
   statusRank,
   fitFooterParts,
   oneLine,
   promptCacheTelemetry,
+  shouldRefreshDirtyState,
   shortenPath,
   splitResourceCommands,
   stripAnsi,
@@ -63,6 +65,7 @@ interface UiState {
   errorUntil: number;
   hasUserMessage: boolean;
   branch: string | null;
+  dirty: boolean;
   tui?: TUI;
   footerData?: ReadonlyFooterDataProvider;
 }
@@ -136,12 +139,9 @@ function titleFor(ctx: ExtensionContext): string {
   return `π ${projectName(ctx)} · ${modelName(ctx)}`;
 }
 
-function contextText(ctx: ExtensionContext, withLabel: boolean): string {
+function contextText(ctx: ExtensionContext): string {
   const usage = ctx.getContextUsage();
-  const window = usage?.contextWindow ?? ctx.model?.contextWindow;
-  const percent = usage?.percent === null || usage?.percent === undefined ? "?" : `${Math.round(usage.percent)}%`;
-  const value = `${percent}/${window ? compactNumber(window) : "?"}`;
-  return withLabel ? `󰍛 ctx ${value}` : `󰍛 ${value}`;
+  return contextTelemetry(usage?.tokens, usage?.contextWindow ?? ctx.model?.contextWindow);
 }
 
 function setupToolRenderers(pi: ExtensionAPI): void {
@@ -236,8 +236,10 @@ export default function trevPi(pi: ExtensionAPI) {
     errorUntil: 0,
     hasUserMessage: false,
     branch: null,
+    dirty: false,
   };
   let lastContext: ExtensionContext | undefined;
+  let dirtyRefreshGeneration = 0;
 
   const stopSpinner = () => {
     if (state.spinnerTimer) clearInterval(state.spinnerTimer);
@@ -254,6 +256,20 @@ export default function trevPi(pi: ExtensionAPI) {
     requestRender();
   };
   const refreshTitle = (ctx: ExtensionContext) => ctx.ui.setTitle(titleFor(ctx));
+  const refreshDirtyState = (ctx: ExtensionContext) => {
+    const generation = ++dirtyRefreshGeneration;
+    void pi.exec("git", ["status", "--porcelain"], { cwd: ctx.cwd, timeout: 5_000 })
+      .then(({ code, stdout }) => {
+        if (generation !== dirtyRefreshGeneration) return;
+        state.dirty = code === 0 && stdout.trim().length > 0;
+        requestRender();
+      })
+      .catch(() => {
+        if (generation !== dirtyRefreshGeneration) return;
+        state.dirty = false;
+        requestRender();
+      });
+  };
 
   pi.on("session_start", (_event, ctx) => {
     lastContext = ctx;
@@ -261,6 +277,8 @@ export default function trevPi(pi: ExtensionAPI) {
       (entry) => entry.type === "message" && entry.message.role === "user",
     );
     if (ctx.mode !== "tui") return;
+    state.dirty = false;
+    refreshDirtyState(ctx);
 
     ctx.ui.setWorkingVisible(false);
     ctx.ui.setHiddenThinkingLabel(`󰧑 reasoning hidden (${keyText("app.thinking.toggle")})`);
@@ -310,8 +328,8 @@ export default function trevPi(pi: ExtensionAPI) {
               text: `${theme.fg("accent", "")} ${theme.fg("muted", projectName(ctx))}`,
               priority: 1,
             },
-            ...(state.branch ? [{ id: "branch", text: theme.fg("muted", ` ${state.branch}`), priority: 2 } as FooterPart] : []),
-            { id: "context", text: theme.fg(contextColor, contextText(ctx, !useShortLabels)), priority: 5 },
+            ...(state.branch ? [{ id: "branch", text: theme.fg("muted", branchTelemetry(state.branch, state.dirty)), priority: 2 } as FooterPart] : []),
+            { id: "context", text: theme.fg(contextColor, contextText(ctx)), priority: 5 },
             ...(queue ? [{
               id: "queue",
               text: theme.fg("warning", useShortLabels ? "󰜎" : "󰜎 queued"),
@@ -434,7 +452,7 @@ export default function trevPi(pi: ExtensionAPI) {
         if (width < 10) return super.render(width);
         const theme = ctx.ui.theme;
         const color = this.frameColor(theme);
-        const contentWidth = Math.max(1, width - 6);
+        const contentWidth = Math.max(1, width - 4);
         const base = super.render(contentWidth);
         let divider = base.length - 1;
         for (let index = base.length - 1; index > 0; index--) {
@@ -457,10 +475,10 @@ export default function trevPi(pi: ExtensionAPI) {
             line = truncateToWidth(line.replace(cursor, `${cursor}${theme.fg("dim", "Ask Pi…")}`), contentWidth, "");
           }
           const gutter = index === 0 ? theme.fg("accent", "› ") : "  ";
-          output.push(`${color("│")} ${gutter}${truncateToWidth(line, contentWidth, "")} ${color("│")}`);
+          output.push(`  ${gutter}${truncateToWidth(line, contentWidth, "")}`);
         });
         for (const line of autocomplete) {
-          output.push(`${color("│")}   ${truncateToWidth(line, contentWidth, "")} ${color("│")}`);
+          output.push(`    ${truncateToWidth(line, contentWidth, "")}`);
         }
         const down = scrollLabel(base[divider]);
         output.push(frameRail(down ? theme.fg("dim", `─${down}`) : "", "", width, color, ["╰", "╯"]));
@@ -498,6 +516,11 @@ export default function trevPi(pi: ExtensionAPI) {
     stopSpinner();
     requestRender();
   });
+  pi.on("tool_result", (event, ctx) => {
+    if (ctx.mode === "tui" && shouldRefreshDirtyState(event.toolName, event.input, event.isError)) {
+      refreshDirtyState(ctx);
+    }
+  });
   pi.on("tool_execution_end", (event) => {
     if (event.isError) flashError();
   });
@@ -510,6 +533,7 @@ export default function trevPi(pi: ExtensionAPI) {
     if (ctx.mode === "tui") refreshTitle(ctx);
   });
   pi.on("session_shutdown", () => {
+    dirtyRefreshGeneration += 1;
     stopSpinner();
     if (state.errorTimer) clearTimeout(state.errorTimer);
     state.errorTimer = undefined;

@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  branchTelemetry,
   compactNumber,
   compactPluginStatus,
+  contextTelemetry,
   statusRank,
   fitFooterParts,
   oneLine,
   promptCacheTelemetry,
+  shouldRefreshDirtyState,
   shortenPath,
   splitResourceCommands,
   stripAnsi,
@@ -77,9 +80,9 @@ test("drops footer segments by declared priority at narrow widths", () => {
     { id: "model", text: "󰚩 model · high", priority: 6 },
     { id: "project", text: " trev-nix", priority: 1 },
     { id: "branch", text: " main", priority: 2 },
-    { id: "context", text: "󰍛 12%/200k", priority: 5 },
+    { id: "context", text: "󰍛 24k/200k", priority: 5 },
     { id: "queue", text: "󰜎 queued", priority: 3 },
-    { id: "cache", text: "󰒍 84k read", priority: 4 },
+    { id: "cache", text: "󰒍 84k r", priority: 4 },
   ];
   const measure = (text: string) => Array.from(stripAnsi(text)).length;
   const separatorWidth = 5;
@@ -113,22 +116,22 @@ test("formats latest provider-reported prompt cache telemetry", () => {
     [message("gpt-5.6", 1_500, 0)],
     "openai-codex",
     "gpt-5.6",
-  ), { text: "󰒍 1.5k read", empty: false });
+  ), { text: "󰒍 1.5k r", empty: false });
   assert.deepEqual(promptCacheTelemetry(
     [message("gpt-5.6", 0, 12_000)],
     "openai-codex",
     "gpt-5.6",
-  ), { text: "󰒍 12k write", empty: false });
+  ), { text: "󰒍 12k w", empty: false });
   assert.deepEqual(promptCacheTelemetry(
     [message("gpt-5.6", 84_000, 12_000)],
     "openai-codex",
     "gpt-5.6",
-  ), { text: "󰒍 84k read / 12k write", empty: false });
+  ), { text: "󰒍 84k r / 12k w", empty: false });
   assert.deepEqual(promptCacheTelemetry(
     [message("gpt-5.6", 84_000, 0), message("gpt-5.6", 0, 0)],
     "openai-codex",
     "gpt-5.6",
-  ), { text: "󰒍 0 read", empty: true });
+  ), { text: "󰒍 0 r", empty: true });
   assert.equal(promptCacheTelemetry(
     [message("gpt-5.5", 84_000, 0)],
     "openai-codex",
@@ -146,14 +149,25 @@ test("formats latest provider-reported prompt cache telemetry", () => {
   ), undefined);
 });
 
+test("refreshes dirty state only after successful worktree-affecting tools", () => {
+  assert.equal(shouldRefreshDirtyState("edit", {}, false), true);
+  assert.equal(shouldRefreshDirtyState("write", {}, false), true);
+  assert.equal(shouldRefreshDirtyState("bash", { command: "git reset --hard" }, false), true);
+  assert.equal(shouldRefreshDirtyState("bash", { command: "echo digit" }, false), false);
+  assert.equal(shouldRefreshDirtyState("read", {}, false), false);
+  assert.equal(shouldRefreshDirtyState("edit", {}, true), false);
+});
+
 test("sanitizes ANSI text and compact values", () => {
   assert.equal(stripAnsi("\x1b[31mred\x1b[0m"), "red");
   assert.equal(oneLine("one\n\ttwo"), "one two");
   assert.equal(compactNumber(999), "999");
   assert.equal(compactNumber(1_500), "1.5k");
   assert.equal(compactNumber(1_000_000), "1.0M");
-  assert.equal(compactPluginStatus("caveman", "⠠⠄ caveman level: FULL"), "caveman ▰▰");
-  assert.equal(compactPluginStatus("ponytail", "○ 🐴 ponytail: ⚡ FULL"), "ponytail ▰▰");
+  assert.equal(contextTelemetry(42_000, 1_000_000), "󰍛 42k/1M");
+  assert.equal(branchTelemetry("main", true), " main ●");
+  assert.equal(compactPluginStatus("caveman", "⠠⠄ caveman level: FULL"), "🧌 ▰▰");
+  assert.equal(compactPluginStatus("ponytail", "○ 🐴 ponytail: ⚡ FULL"), "🦄 ▰▰");
   const usage = "codex 80% 5h 20% wk \x1b[38;5;8m· ↻ Tue 14:30\x1b[39m";
   assert.equal(compactPluginStatus("usage", usage), usage);
   assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Inactive"), "󰒋");

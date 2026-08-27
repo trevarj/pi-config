@@ -718,7 +718,15 @@ test("automatic status shows every configured provider with current first", asyn
 			getProviderDisplayName: (provider: string) => provider,
 		},
 	});
-	const plainStatus = () => (statuses.get("usage") ?? "").replace(/\u001b\[[0-9;]*m/gu, "");
+	const rawStatus = () => statuses.get("usage") ?? "";
+	const plainStatus = () => rawStatus().replace(/\u001b\[[0-9;]*m/gu, "");
+	const assertCurrentNormalAndOtherDim = (current: string, other: string) => {
+		const status = rawStatus();
+		assert.ok(status.startsWith(`${current} `));
+		const otherIndex = status.indexOf(other);
+		const style = status.slice(status.lastIndexOf("\u001b[", otherIndex), otherIndex);
+		assert.match(style, /^\u001b\[(?!39m)[0-9;]*m$/u);
+	};
 
 	mock.events.get("session_start")?.[0]?.({}, ctx);
 	for (let attempt = 0; attempt < 10 && plainStatus().includes("checking"); attempt += 1) {
@@ -726,8 +734,9 @@ test("automatic status shows every configured provider with current first", asyn
 	}
 	assert.equal(
 		plainStatus(),
-		"codex 80% 5h 40% wk · claude 90% 5h 70% wk",
+		"codex 80% 5h 40% wk │ claude 90% 5h 70% wk",
 	);
+	assertCurrentNormalAndOtherDim("codex", "claude");
 
 	Object.assign(ctx, { model: claudeModel });
 	mock.events.get("model_select")?.[0]?.({ model: claudeModel }, ctx);
@@ -736,8 +745,9 @@ test("automatic status shows every configured provider with current first", asyn
 	}
 	assert.equal(
 		plainStatus(),
-		"claude 90% 5h 70% wk · codex 80% 5h 40% wk",
+		"claude 90% 5h 70% wk │ codex 80% 5h 40% wk",
 	);
+	assertCurrentNormalAndOtherDim("claude", "codex");
 });
 
 test("automatic provider failures back off instead of retrying every turn", async (t) => {

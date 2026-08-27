@@ -83,7 +83,8 @@ export function compactPluginStatus(name: string, status: string): string {
       : undefined;
   if (!level) return plain;
   const count = ({ lite: 1, full: 2, ultra: 3 } as Record<string, number>)[level];
-  return count ? `${name} ${"▰".repeat(count)}` : `${name} ${level}`;
+  const icon = name === "caveman" ? "🧌" : "🦄";
+  return count ? `${icon} ${"▰".repeat(count)}` : `${icon} ${level}`;
 }
 
 export function shortenPath(path: string, home = homedir()): string {
@@ -98,6 +99,15 @@ export function compactNumber(value: number): string {
   if (value < 1_000_000) return `${Math.round(value / 1_000)}k`;
   if (value < 10_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   return `${Math.round(value / 1_000_000)}M`;
+}
+
+export function branchTelemetry(branch: string, dirty: boolean): string {
+  return ` ${branch}${dirty ? " ●" : ""}`;
+}
+
+export function contextTelemetry(tokens: number | null | undefined, window: number | undefined): string {
+  const value = (number: number) => compactNumber(number).replace(/\.0([kM])$/u, "$1");
+  return `󰍛 ${tokens == null ? "?" : value(tokens)}/${window ? value(window) : "?"}`;
 }
 
 export function promptCacheTelemetry(
@@ -128,14 +138,24 @@ export function promptCacheTelemetry(
 
   if (!latest || !observed) return undefined;
   const values = [
-    ...(latest.read > 0 || latest.write === 0 ? [`${compactNumber(latest.read)} read`] : []),
-    ...(latest.write > 0 ? [`${compactNumber(latest.write)} write`] : []),
+    ...(latest.read > 0 || latest.write === 0 ? [`${compactNumber(latest.read)} r`] : []),
+    ...(latest.write > 0 ? [`${compactNumber(latest.write)} w`] : []),
   ];
   return { text: `󰒍 ${values.join(" / ")}`, empty: latest.read === 0 && latest.write === 0 };
 }
 
 function cacheTokens(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+export function shouldRefreshDirtyState(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+  isError: boolean,
+): boolean {
+  if (isError) return false;
+  if (toolName === "edit" || toolName === "write") return true;
+  return toolName === "bash" && /\bgit\b/u.test(oneLine(input?.command));
 }
 
 function textOutput(result: ToolResultLike): string {
