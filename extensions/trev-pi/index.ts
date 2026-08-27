@@ -47,6 +47,7 @@ import {
 } from "./layout.ts";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const EDITOR_BACKGROUND = "\x1b[48;2;37;42;52m"; // #252A34, subtle Nord shade.
 const TOOL_ICONS: Record<BuiltInToolName, string> = {
   bash: "",
   read: "󰈙",
@@ -446,7 +447,7 @@ export default function trevPi(pi: ExtensionAPI) {
         const panel = (line: string) => {
           const clipped = truncateToWidth(line, width, "");
           const padded = `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
-          return backgroundLine(padded, theme.getBgAnsi("selectedBg"));
+          return backgroundLine(padded, EDITOR_BACKGROUND);
         };
         const cursor = "\x1b[7m \x1b[0m";
         editorLines.forEach((rawLine, index) => {
