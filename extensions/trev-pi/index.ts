@@ -491,6 +491,7 @@ export default function trevPi(pi: ExtensionAPI) {
           const padded = `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
           return backgroundLine(padded, EDITOR_BACKGROUND);
         };
+        output.push(panel(""));
         const cursor = "\x1b[7m \x1b[0m";
         editorLines.forEach((rawLine, index) => {
           let line = rawLine;
@@ -510,6 +511,7 @@ export default function trevPi(pi: ExtensionAPI) {
           const label = theme.fg("dim", down.trim());
           output.push(panel(`    ${label}${" ".repeat(Math.max(0, width - 4 - visibleWidth(label)))}`));
         }
+        output.push(panel(""));
         return output;
       }
     }

@@ -62,6 +62,11 @@ callPackage ../npm-bundle.nix { } {
         '{ name: "fork", description: "Create a new fork from a previous user message" },' \
         '{ name: "fork", description: "Compact context and fork into a new Pi pane", argumentHint: "[steering message]" },'
 
+      # Pi has no transcript-width setting. Keep output readable on wide terminals.
+      substituteInPlace "$interactive" \
+        --replace-fail 'this.chatContainer = new Container();' \
+        'this.chatContainer = new (class extends Container { render(width) { return super.render(Math.min(width, 100)); } })();'
+
       makeWrapper ${lib.getExe nodejs} "$out/bin/pi" \
         --add-flags "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js" \
         --prefix PATH : ${
@@ -88,6 +93,7 @@ callPackage ../npm-bundle.nix { } {
       grep -Fq 'builtinNames.has(command.name) && command.name !== "fork"' "$interactive"
       grep -Fq 'Compact context and fork into a new Pi pane' \
         "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js"
+      grep -Fq 'super.render(Math.min(width, 100))' "$interactive"
 
       runHook postInstallCheck
     '';
