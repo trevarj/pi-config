@@ -1,6 +1,7 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { hostname } from "node:os";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 export function forwardedEmacsSocket(env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (!env.SSH_CONNECTION) return undefined;
@@ -20,14 +21,49 @@ export function magitDirectory(
   return `${env.PI_DIFF_TRAMP_PREFIX || `/ssh:${env.USER}@${host}${port}:`}${repository}`;
 }
 
-export function emacsclientArgs(directory: string, socket?: string): string[] {
+function magitForm(directory: string): string {
+  return `(progn (require 'magit) (magit-status ${JSON.stringify(directory)}))`;
+}
+
+export function emacsclientArgs(directory: string, socket?: string, tty = false): string[] {
   return [
-    ...(socket ? ["--socket-name", socket] : ["--alternate-editor", ""]),
-    "--no-wait",
-    "--reuse-frame",
+    ...(socket ? ["--socket-name", socket] : []),
+    tty ? "--tty" : "--no-wait",
     "--eval",
-    `(progn (require 'magit) (magit-status ${JSON.stringify(directory)}))`,
+    magitForm(directory),
   ];
+}
+
+async function openTerminalMagit(
+  directory: string,
+  socket: string | undefined,
+  ctx: ExtensionCommandContext,
+): Promise<string | undefined> {
+  const localSocket = `${process.env.XDG_RUNTIME_DIR || ""}/emacs/server`;
+  const useClient = Boolean(socket || existsSync(localSocket));
+  const command = useClient ? "emacsclient" : "emacs";
+  const args = useClient
+    ? emacsclientArgs(directory, socket, true)
+    : ["--no-window-system", "--eval", magitForm(directory)];
+
+  return ctx.ui.custom<string | undefined>((tui, _theme, _keybindings, done) => {
+    queueMicrotask(() => {
+      tui.stop();
+      const child = spawn(command, args, { cwd: ctx.cwd, stdio: "inherit" });
+      let finished = false;
+      const finish = (error?: string) => {
+        if (finished) return;
+        finished = true;
+        tui.start();
+        tui.requestRender(true);
+        done(error);
+      };
+      child.once("error", (error) => finish(error.message));
+      child.once("close", (code) => finish(code ? `${command} exited with status ${code}` : undefined));
+    });
+
+    return { render: () => ["Opening Magit in terminal..."], invalidate() {} };
+  });
 }
 
 export default function (pi: ExtensionAPI) {
@@ -40,18 +76,18 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const socket = forwardedEmacsSocket();
-      if (socket && !existsSync(socket)) {
-        ctx.ui.notify(`Forwarded Emacs socket not found: ${socket}`, "error");
+      const forwarded = forwardedEmacsSocket();
+      const socket = forwarded && existsSync(forwarded) ? forwarded : undefined;
+      const directory = socket ? magitDirectory(git.stdout.trim()) : git.stdout.trim();
+      const result = await pi.exec("emacsclient", emacsclientArgs(directory, socket), { timeout: 10_000 });
+      if (result.code === 0) return;
+
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify(result.stderr.trim() || result.stdout.trim() || "emacsclient failed", "error");
         return;
       }
-
-      const result = await pi.exec("emacsclient", emacsclientArgs(magitDirectory(git.stdout.trim()), socket), {
-        timeout: 10_000,
-      });
-      if (result.code !== 0) {
-        ctx.ui.notify(result.stderr.trim() || result.stdout.trim() || "emacsclient failed", "error");
-      }
+      const error = await openTerminalMagit(directory, socket, ctx);
+      if (error) ctx.ui.notify(error, "error");
     },
   });
 }

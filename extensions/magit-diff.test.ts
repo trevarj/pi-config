@@ -28,9 +28,14 @@ test("builds safe emacsclient arguments for local and forwarded servers", () => 
     forwardedEmacsSocket({ SSH_CONNECTION: "client 1 server 22", XDG_RUNTIME_DIR: "/run/user/1000" }),
     "/run/user/1000/pi-emacs",
   );
-  assert.deepEqual(emacsclientArgs('/repo/with "quotes"').slice(-2), [
+  assert.deepEqual(emacsclientArgs('/repo/with "quotes"'), [
+    "--no-wait",
     "--eval",
     '(progn (require \'magit) (magit-status "/repo/with \\"quotes\\""))',
   ]);
-  assert.deepEqual(emacsclientArgs("/repo", "/tmp/server").slice(0, 2), ["--socket-name", "/tmp/server"]);
+  assert.deepEqual(emacsclientArgs("/repo", "/tmp/server", true).slice(0, 3), [
+    "--socket-name",
+    "/tmp/server",
+    "--tty",
+  ]);
 });
