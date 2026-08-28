@@ -13,7 +13,7 @@ export interface ToolResultLike {
 }
 
 export interface FooterPart {
-  id: "project" | "branch" | "model" | "queue" | "context" | "cache";
+  id: "project" | "branch" | "model" | "github" | "queue" | "context" | "cache";
   text: string;
   priority: number;
 }
@@ -105,6 +105,16 @@ export function compactNumber(value: number): string {
   if (value < 1_000_000) return `${Math.round(value / 1_000)}k`;
   if (value < 10_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   return `${Math.round(value / 1_000_000)}M`;
+}
+
+export function parseGitHubNotificationCount(output: string): number {
+  const values = output.trim().split(/\s+/u);
+  if (!output.trim() || values.some((value) => !/^\d+$/u.test(value))) {
+    throw new Error("Invalid GitHub notification count");
+  }
+  const count = values.reduce((total, value) => total + Number(value), 0);
+  if (!Number.isSafeInteger(count)) throw new Error("Invalid GitHub notification count");
+  return count;
 }
 
 export function branchTelemetry(branch: string, dirty: boolean): string {

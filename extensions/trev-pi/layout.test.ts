@@ -9,6 +9,7 @@ import {
   statusRank,
   fitFooterParts,
   oneLine,
+  parseGitHubNotificationCount,
   promptCacheTelemetry,
   shouldRefreshDirtyState,
   shortenPath,
@@ -78,10 +79,11 @@ test("summarizes built-in results without hiding failures", () => {
 
 test("drops footer segments by declared priority at narrow widths", () => {
   const parts: FooterPart[] = [
-    { id: "model", text: "󰚩 model · high", priority: 6 },
+    { id: "model", text: "󰚩 model · high", priority: 7 },
     { id: "project", text: " trev-nix", priority: 1 },
     { id: "branch", text: " main", priority: 2 },
-    { id: "context", text: "󰍛 24k/200k", priority: 5 },
+    { id: "context", text: "󰍛 24k/200k", priority: 6 },
+    { id: "github", text: " 12", priority: 5 },
     { id: "queue", text: "󰜎 queued", priority: 3 },
     { id: "cache", text: "󰒍 84k r", priority: 4 },
   ];
@@ -93,16 +95,27 @@ test("drops footer segments by declared priority at narrow widths", () => {
   );
 
   const wide = fitFooterParts(parts, 120, measure, separatorWidth);
-  assert.equal(wide.length, 6);
+  assert.equal(wide.length, 7);
   assert.ok(fittedWidth(wide) <= 120);
 
-  const medium = fitFooterParts(parts, 80, measure, separatorWidth);
-  assert.ok(medium.some((part) => part.id === "context"));
+  const medium = fitFooterParts(parts, 45, measure, separatorWidth);
+  assert.ok(medium.some((part) => part.id === "github"));
+  assert.ok(!medium.some((part) => part.id === "cache"));
   assert.ok(fittedWidth(medium) <= 80);
 
-  const narrow = fitFooterParts(parts, 40, measure, separatorWidth);
+  const narrow = fitFooterParts(parts, 35, measure, separatorWidth);
   assert.deepEqual(narrow.map((part) => part.id), ["model", "context"]);
   assert.ok(fittedWidth(narrow) <= 40);
+});
+
+test("parses and totals paginated GitHub notification counts", () => {
+  assert.equal(parseGitHubNotificationCount("0\n"), 0);
+  assert.equal(parseGitHubNotificationCount("12\n"), 12);
+  assert.equal(parseGitHubNotificationCount(" 50\n 12 \n"), 62);
+  assert.throws(() => parseGitHubNotificationCount(""), /Invalid GitHub notification count/);
+  assert.throws(() => parseGitHubNotificationCount("nope\n"), /Invalid GitHub notification count/);
+  assert.throws(() => parseGitHubNotificationCount("-1\n"), /Invalid GitHub notification count/);
+  assert.throws(() => parseGitHubNotificationCount("1.5\n"), /Invalid GitHub notification count/);
 });
 
 test("formats latest provider-reported prompt cache telemetry", () => {

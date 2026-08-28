@@ -34,6 +34,7 @@ import {
   statusRank,
   fitFooterParts,
   oneLine,
+  parseGitHubNotificationCount,
   promptCacheTelemetry,
   shouldRefreshDirtyState,
   shortenPath,
@@ -65,6 +66,9 @@ interface UiState {
   spinnerTimer?: ReturnType<typeof setInterval>;
   errorTimer?: ReturnType<typeof setTimeout>;
   errorUntil: number;
+  githubRefreshTimer?: ReturnType<typeof setInterval>;
+  githubNotifications?: number;
+  githubNotificationsFailed: boolean;
   hasUserMessage: boolean;
   branch: string | null;
   dirty: boolean;
@@ -214,16 +218,22 @@ export default function trevPi(pi: ExtensionAPI) {
     working: false,
     spinnerFrame: 0,
     errorUntil: 0,
+    githubNotificationsFailed: false,
     hasUserMessage: false,
     branch: null,
     dirty: false,
   };
   let lastContext: ExtensionContext | undefined;
   let dirtyRefreshGeneration = 0;
+  let githubRefreshGeneration = 0;
 
   const stopSpinner = () => {
     if (state.spinnerTimer) clearInterval(state.spinnerTimer);
     state.spinnerTimer = undefined;
+  };
+  const stopGithubRefresh = () => {
+    if (state.githubRefreshTimer) clearInterval(state.githubRefreshTimer);
+    state.githubRefreshTimer = undefined;
   };
   const requestRender = () => state.tui?.requestRender();
   const flashError = () => {
@@ -236,6 +246,24 @@ export default function trevPi(pi: ExtensionAPI) {
     requestRender();
   };
   const refreshTitle = (ctx: ExtensionContext) => ctx.ui.setTitle(titleFor(ctx));
+  const refreshGithubNotifications = (ctx: ExtensionContext) => {
+    const generation = ++githubRefreshGeneration;
+    // gh's disk cache is shared by Pi sessions, avoiding normal duplicate API polls.
+    void pi.exec("gh", ["api", "notifications", "--paginate", "--cache", "5m", "--jq", "length"], { timeout: 30_000 })
+      .then(({ code, stdout }) => {
+        if (generation !== githubRefreshGeneration) return;
+        if (code !== 0) throw new Error("GitHub notification refresh failed");
+        state.githubNotifications = parseGitHubNotificationCount(stdout);
+        state.githubNotificationsFailed = false;
+        requestRender();
+      })
+      .catch(() => {
+        if (generation !== githubRefreshGeneration) return;
+        state.githubNotifications = undefined;
+        state.githubNotificationsFailed = true;
+        requestRender();
+      });
+  };
   const refreshDirtyState = (ctx: ExtensionContext) => {
     const generation = ++dirtyRefreshGeneration;
     void pi.exec("git", ["status", "--porcelain"], { cwd: ctx.cwd, timeout: 5_000 })
@@ -258,7 +286,12 @@ export default function trevPi(pi: ExtensionAPI) {
     );
     if (ctx.mode !== "tui") return;
     state.dirty = false;
+    state.githubNotifications = undefined;
+    state.githubNotificationsFailed = false;
     refreshDirtyState(ctx);
+    refreshGithubNotifications(ctx);
+    stopGithubRefresh();
+    state.githubRefreshTimer = setInterval(() => refreshGithubNotifications(ctx), 5 * 60_000);
 
     ctx.ui.setWorkingVisible(false);
     ctx.ui.setHiddenThinkingLabel(`󰧑 reasoning hidden (${keyText("app.thinking.toggle")})`);
@@ -302,14 +335,23 @@ export default function trevPi(pi: ExtensionAPI) {
             ctx.model?.id,
           );
           const parts = (useShortLabels: boolean): FooterPart[] => [
-            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 6 },
+            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 7 },
             {
               id: "project",
               text: `${theme.fg("accent", "")} ${theme.fg("muted", projectName(ctx))}`,
               priority: 1,
             },
             ...(state.branch ? [{ id: "branch", text: theme.fg("muted", branchTelemetry(state.branch, state.dirty)), priority: 2 } as FooterPart] : []),
-            { id: "context", text: theme.fg(contextColor, contextText(ctx)), priority: 5 },
+            { id: "context", text: theme.fg(contextColor, contextText(ctx)), priority: 6 },
+            ...(state.githubNotificationsFailed ? [{
+              id: "github",
+              text: theme.fg("error", " !"),
+              priority: 5,
+            } as FooterPart] : state.githubNotifications ? [{
+              id: "github",
+              text: theme.fg("warning", ` ${state.githubNotifications}`),
+              priority: 5,
+            } as FooterPart] : []),
             ...(queue ? [{
               id: "queue",
               text: theme.fg("warning", useShortLabels ? "󰜎" : "󰜎 queued"),
@@ -520,7 +562,9 @@ export default function trevPi(pi: ExtensionAPI) {
   });
   pi.on("session_shutdown", () => {
     dirtyRefreshGeneration += 1;
+    githubRefreshGeneration += 1;
     stopSpinner();
+    stopGithubRefresh();
     if (state.errorTimer) clearTimeout(state.errorTimer);
     state.errorTimer = undefined;
     if (lastContext?.mode === "tui") {
