@@ -31,8 +31,12 @@ test("sends a bounded JSON request to the bridge", async () => {
   const socketPath = join(directory, "bridge.sock");
   const server = createServer((socket) => {
     socket.once("data", (data) => {
-      assert.deepEqual(JSON.parse(data.toString()), { directory: '/repo/with "quotes"' });
-      socket.end('{"ok":true}\n');
+      const request = JSON.parse(data.toString());
+      if (request.directory === "/invalid-response") socket.end('{"ok":"yes"}\n');
+      else {
+        assert.deepEqual(request, { directory: '/repo/with "quotes"' });
+        socket.end('{"ok":true}\n');
+      }
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -42,6 +46,10 @@ test("sends a bounded JSON request to the bridge", async () => {
 
   try {
     assert.deepEqual(await sendBridgeRequest(socketPath, '/repo/with "quotes"'), { ok: true });
+    await assert.rejects(
+      sendBridgeRequest(socketPath, "/invalid-response"),
+      /Emacs bridge returned an invalid response/,
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(directory, { recursive: true, force: true });

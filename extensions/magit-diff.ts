@@ -43,7 +43,13 @@ export function sendBridgeRequest(
       clearTimeout(timeout);
       if (failed) return reject(failed);
       try {
-        resolve(JSON.parse(response.trim()) as { ok: boolean; error?: string });
+        const result: unknown = JSON.parse(response.trim());
+        if (
+          typeof result !== "object" || result === null || !("ok" in result) ||
+          typeof result.ok !== "boolean" ||
+          ("error" in result && result.error !== undefined && typeof result.error !== "string")
+        ) throw new Error();
+        resolve(result as { ok: boolean; error?: string });
       } catch {
         reject(new Error("Emacs bridge returned an invalid response"));
       }
