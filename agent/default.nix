@@ -50,10 +50,17 @@ callPackage ../npm-bundle.nix { } {
     postInstall = ''
       # Let an extension named "fork" replace Pi's exact /fork command. Commands
       # with arguments already bypass this built-in branch upstream.
-      substituteInPlace \
-        "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js" \
+      interactive="$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
+      substituteInPlace "$interactive" \
         --replace-fail 'if (text === "/fork") {' \
-        'if (text === "/fork" && !this.isExtensionCommand(text)) {'
+        'if (text === "/fork" && !this.isExtensionCommand(text)) {' \
+        --replace-fail '.filter((command) => builtinNames.has(command.name))' \
+        '.filter((command) => builtinNames.has(command.name) && command.name !== "fork")'
+      substituteInPlace \
+        "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js" \
+        --replace-fail \
+        '{ name: "fork", description: "Create a new fork from a previous user message" },' \
+        '{ name: "fork", description: "Compact context and fork into a new Pi pane", argumentHint: "[steering message]" },'
 
       makeWrapper ${lib.getExe nodejs} "$out/bin/pi" \
         --add-flags "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js" \
@@ -76,8 +83,11 @@ callPackage ../npm-bundle.nix { } {
         echo "pi --version reported '$actual', expected '${version}'" >&2
         exit 1
       fi
-      grep -Fq 'if (text === "/fork" && !this.isExtensionCommand(text)) {' \
-        "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
+      interactive="$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
+      grep -Fq 'if (text === "/fork" && !this.isExtensionCommand(text)) {' "$interactive"
+      grep -Fq 'builtinNames.has(command.name) && command.name !== "fork"' "$interactive"
+      grep -Fq 'Compact context and fork into a new Pi pane' \
+        "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/slash-commands.js"
 
       runHook postInstallCheck
     '';
