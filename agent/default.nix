@@ -48,6 +48,13 @@ callPackage ../npm-bundle.nix { } {
     nativeBuildInputs = [ makeBinaryWrapper ];
 
     postInstall = ''
+      # Let an extension named "fork" replace Pi's exact /fork command. Commands
+      # with arguments already bypass this built-in branch upstream.
+      substituteInPlace \
+        "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js" \
+        --replace-fail 'if (text === "/fork") {' \
+        'if (text === "/fork" && !this.isExtensionCommand(text)) {'
+
       makeWrapper ${lib.getExe nodejs} "$out/bin/pi" \
         --add-flags "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js" \
         --prefix PATH : ${
@@ -69,6 +76,8 @@ callPackage ../npm-bundle.nix { } {
         echo "pi --version reported '$actual', expected '${version}'" >&2
         exit 1
       fi
+      grep -Fq 'if (text === "/fork" && !this.isExtensionCommand(text)) {' \
+        "$out/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
 
       runHook postInstallCheck
     '';

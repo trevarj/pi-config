@@ -70,6 +70,7 @@ let
         };
         extensions = (settingsBase.extensions or [ ]) ++ [
           ./extensions/agentwire.ts
+          ./extensions/herdr-fork.ts
           ./extensions/herdr-waiting.ts
           ./extensions/magit-diff.ts
           ./extensions/ollama-autostart.ts
