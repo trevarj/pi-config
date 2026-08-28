@@ -10,7 +10,7 @@ test("selects host or reverse-forwarded bridge and builds TRAMP paths", () => {
   assert.equal(bridgeSocket({ XDG_RUNTIME_DIR: "/run/user/1000" }), "/run/user/1000/pi-bridge/emacs.sock");
   assert.equal(
     bridgeSocket({ XDG_RUNTIME_DIR: "/run/user/1000", SSH_CONNECTION: "client 1 server 22" }),
-    "/run/user/1000/pi-bridge/local-emacs.sock",
+    "/run/user/1000/pi-local-emacs.sock",
   );
   assert.equal(magitDirectory("/repo", {}, "server"), "/repo");
   assert.equal(

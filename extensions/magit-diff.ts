@@ -5,8 +5,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export function bridgeSocket(env: NodeJS.ProcessEnv = process.env): string {
   const runtimeDir = env.XDG_RUNTIME_DIR;
   if (!runtimeDir) throw new Error("XDG_RUNTIME_DIR is unavailable");
-  const socket = env.SSH_CONNECTION ? "local-emacs.sock" : "emacs.sock";
-  return `${runtimeDir}/pi-bridge/${socket}`;
+  return env.SSH_CONNECTION
+    ? `${runtimeDir}/pi-local-emacs.sock`
+    : `${runtimeDir}/pi-bridge/emacs.sock`;
 }
 
 export function magitDirectory(
