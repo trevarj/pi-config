@@ -1,10 +1,10 @@
 {
   "name": "trev-pi-coding-agent",
-  "version": "0.84.3",
+  "version": "0.84.4",
   "private": true,
   "description": "Pinned pi coding agent, installed from the published npm build",
   "license": "MIT",
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.3"
+    "@earendil-works/pi-coding-agent": "0.84.4"
   }
 }
