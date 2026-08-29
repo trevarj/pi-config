@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { connect } from "node:net";
+import { join } from "node:path";
 import test from "node:test";
 import agentwire, {
   createLineDecoder,
@@ -10,6 +12,7 @@ import agentwire, {
   serializeEntries,
   serializeMessage,
   socketDir,
+  socketPath,
   truncateText,
   type CommandPorts,
 } from "./agentwire.ts";
@@ -216,6 +219,10 @@ test("subagent descriptions are truncated to 200 bytes", () => {
   assert.ok(Buffer.byteLength(description) < 260);
 });
 
+test("socket paths do not collide for the same PID", () => {
+  assert.notEqual(socketPath(2), socketPath(2));
+});
+
 test("extension no-ops entirely under AGENTWIRE_SPAWNED", () => {
   process.env.AGENTWIRE_SPAWNED = "1";
   try {
@@ -266,7 +273,9 @@ test("serves hello, re-announce, events, and commands over the socket", async ()
   };
   handlers.get("session_start")?.({}, ctx);
   try {
-    const socket = connect(`${socketDir()}/${process.pid}.sock`);
+    const sockets = readdirSync(socketDir()).filter((name) => name.endsWith(".sock"));
+    assert.equal(sockets.length, 1);
+    const socket = connect(join(socketDir(), sockets[0]));
     socket.setEncoding("utf8");
     const frames: Record<string, unknown>[] = [];
     const waiters: ((frame: Record<string, unknown>) => void)[] = [];

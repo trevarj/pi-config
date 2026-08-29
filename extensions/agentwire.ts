@@ -2,6 +2,7 @@
 // Agentwire IRC bridge can list, observe, and drive it. Frames mirror pi's
 // RPC mode shapes so the bridge shares one translator for live TUI sessions
 // (this socket) and bridge-spawned `pi --mode rpc` subprocesses.
+import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -378,6 +379,10 @@ export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(runtime && runtime.startsWith("/") ? runtime : tmpdir(), "agentwire", "pi");
 }
 
+export function socketPath(pid = process.pid): string {
+  return join(socketDir(), `${pid}-${randomUUID()}.sock`);
+}
+
 // --- extension runtime ---
 
 export default function agentwire(pi: AgentwireExtensionAPI) {
@@ -390,7 +395,7 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
   let modelRegistry: { getAvailable(): ModelInfo[] } | undefined;
   const subagents = createSubagentRegistry();
   const clients = new Set<Socket>();
-  const path = join(socketDir(), `${process.pid}.sock`);
+  const path = socketPath();
   let server: Server | undefined;
 
   const state = (): Record<string, unknown> => {
