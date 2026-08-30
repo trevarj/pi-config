@@ -102,6 +102,12 @@ test("entry serialization pages with a strict cursor", () => {
   const after = serializeEntries(branch, "a");
   assert.deepEqual(after.entries.map((entry) => entry.id), ["c"]);
   assert.throws(() => serializeEntries(branch, "nope"));
+  const withLatest = [
+    ...branch,
+    { id: "d", parentId: "c", type: "message", message: { role: "user", content: "latest" } },
+  ];
+  assert.deepEqual(serializeEntries(withLatest, undefined, 2).entries.map((entry) => entry.id), ["a", "c"]);
+  assert.deepEqual(serializeEntries(withLatest, undefined, 2, true).entries.map((entry) => entry.id), ["c", "d"]);
 });
 
 test("prompt steers when busy and sends directly when idle", () => {
@@ -304,6 +310,9 @@ test("serves hello, re-announce, events, and commands over the socket", async ()
     assert.equal(hello.sessionId, "123_abc");
     assert.equal(hello.sessionName, "my-session");
     assert.equal(hello.busy, false);
+    assert.equal(hello.waiting, false);
+    assert.equal(typeof hello.startedAt, "string");
+    assert.equal(typeof hello.updatedAt, "string");
     assert.deepEqual(hello.subagents, []);
 
     busHandlers.get("subagents:created")?.({
@@ -333,6 +342,13 @@ test("serves hello, re-announce, events, and commands over the socket", async ()
     const changed = await next();
     assert.equal(changed.type, "session_changed");
     assert.equal((changed.subagents as { id: string }[])[0].id, "sub-1");
+
+    handlers.get("ui_prompt_start")?.({}, ctx);
+    const waiting = await next();
+    assert.equal(waiting.type, "session_changed");
+    assert.equal(waiting.waiting, true);
+    handlers.get("ui_prompt_end")?.({}, ctx);
+    assert.equal((await next()).waiting, false);
 
     handlers.get("agent_start")?.({}, ctx);
     assert.equal((await next()).type, "agent_start");

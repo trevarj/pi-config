@@ -22,6 +22,20 @@ let
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
   trevPi = ./extensions/trev-pi;
   workMode = ./extensions/work-mode.ts;
+  organizer = ./extensions/organizer;
+  organizerLauncher = pkgs.writeShellApplication {
+    name = "pi-organizer";
+    text = ''
+      pi_path="$(command -v pi)" || {
+        echo "pi not found on caller PATH" >&2
+        exit 127
+      }
+      ${pkgs.coreutils}/bin/install -d -m700 "$HOME/Workspace/.pi-organizer"
+      cd "$HOME/Workspace/.pi-organizer"
+      exec "$pi_path" --continue --name organizer \
+        --model openai-codex/gpt-5.6-luna --thinking high
+    '';
+  };
   feedbackPrompts = ./config/prompts;
   settingsBase = builtins.fromJSON (builtins.readFile (agents + "/.pi/agent/settings.base.json"));
   webSearchBase = builtins.fromJSON (builtins.readFile (agents + "/.pi/web-search.json"));
@@ -74,6 +88,7 @@ let
           ./extensions/herdr-waiting.ts
           ./extensions/magit-diff.ts
           ./extensions/ollama-autostart.ts
+          organizer
           trevPi
           workMode
         ];
@@ -110,6 +125,7 @@ let
 in
 {
   home = {
+    packages = [ organizerLauncher ];
     file = {
       ".pi-lens/config.json".text = builtins.toJSON {
         ui.compactToolLine = true;
@@ -118,6 +134,7 @@ in
       ".pi/agent/AGENTS.md".source = agents + "/.codex/AGENTS.md";
       ".pi/agent/APPEND_SYSTEM.md".source = agents + "/.pi/agent/APPEND_SYSTEM.md";
       ".pi/agent/models.json".source = ./config/models.json;
+      ".pi/agent/agents/organizer.md".source = ./config/organizer-agent.md;
       # Emacs-style bindings: prompt history on C-p/C-n (explicit history
       # bindings override model cycling in the editor) and C-h as backspace;
       # the rest of the Emacs set is already the default.

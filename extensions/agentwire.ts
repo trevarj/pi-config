@@ -159,6 +159,7 @@ export function serializeEntries(
   branch: unknown[],
   since?: string,
   limit = MAX_ENTRIES,
+  tail = false,
 ): { entries: Record<string, unknown>[]; leafId: string | null } {
   const messages = (branch as SessionEntry[]).filter(
     (entry) => entry && entry.type === "message" && entry.message,
@@ -169,7 +170,7 @@ export function serializeEntries(
     if (index === -1) throw new Error(`unknown entry cursor: ${since}`);
     start = index + 1;
   }
-  const window = messages.slice(start, start + limit);
+  const window = tail && !since ? messages.slice(-limit) : messages.slice(start, start + limit);
   const entries: Record<string, unknown>[] = [];
   for (const entry of window) {
     const message = serializeMessage(entry.message as Record<string, unknown>);
@@ -290,7 +291,7 @@ export interface CommandPorts {
   isIdle(): boolean;
   sendUserMessage(text: string, deliverAs?: "steer" | "followUp"): void;
   abort(): void;
-  entries(since?: string, limit?: number): { entries: Record<string, unknown>[]; leafId: string | null };
+  entries(since?: string, limit?: number, tail?: boolean): { entries: Record<string, unknown>[]; leafId: string | null };
   availableModels(): ModelInfo[];
   setModel(provider: string, modelId: string): void;
   setThinkingLevel(level: string): void;
@@ -340,7 +341,7 @@ export function handleCommand(
       case "get_entries": {
         const since = command.since === undefined ? undefined : String(command.since);
         const limit = typeof command.limit === "number" ? command.limit : undefined;
-        return respond(true, { data: ports.entries(since, limit) });
+        return respond(true, { data: ports.entries(since, limit, command.tail === true) });
       }
       case "get_available_models":
         return respond(true, {
@@ -392,6 +393,9 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
 
   let lastCtx: AgentwireContext | undefined;
   let busy = false;
+  let waiting = false;
+  let startedAt = new Date().toISOString();
+  let updatedAt = startedAt;
   let modelRegistry: { getAvailable(): ModelInfo[] } | undefined;
   const subagents = createSubagentRegistry();
   const clients = new Set<Socket>();
@@ -411,6 +415,9 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
       model: model ? { provider: model.provider, id: model.id, name: model.name ?? model.id } : null,
       thinkingLevel: pi.getThinkingLevel(),
       busy,
+      waiting,
+      startedAt,
+      updatedAt,
       pid: process.pid,
       // Carried by `hello` and `session_changed` so a late client does not have
       // to wait for the next lifecycle event to learn about running agents.
@@ -429,8 +436,8 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     sendUserMessage: (text, deliverAs) =>
       pi.sendUserMessage(text, deliverAs ? { deliverAs } : undefined),
     abort: () => lastCtx?.abort(),
-    entries: (since, limit) =>
-      serializeEntries(lastCtx?.sessionManager.getBranch() ?? [], since, limit),
+    entries: (since, limit, tail) =>
+      serializeEntries(lastCtx?.sessionManager.getBranch() ?? [], since, limit, tail),
     availableModels: () => modelRegistry?.getAvailable() ?? [],
     setModel: (provider, modelId) => {
       const model = (modelRegistry?.getAvailable() ?? []).find(
@@ -488,6 +495,9 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     modelRegistry = (ctx as unknown as { modelRegistry?: { getAvailable(): ModelInfo[] } })
       .modelRegistry;
     busy = false;
+    waiting = false;
+    startedAt = new Date().toISOString();
+    updatedAt = startedAt;
     listen();
     broadcast({ type: "session_changed", ...state() });
   });
@@ -506,12 +516,27 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
   pi.on("agent_start", (_event, ctx) => {
     lastCtx = ctx;
     busy = true;
+    waiting = false;
+    updatedAt = new Date().toISOString();
     broadcast({ type: "agent_start" });
   });
   pi.on("agent_settled", (_event, ctx) => {
     lastCtx = ctx;
     busy = false;
+    updatedAt = new Date().toISOString();
     broadcast({ type: "agent_settled" });
+  });
+  pi.on("ui_prompt_start", (_event, ctx) => {
+    lastCtx = ctx;
+    waiting = true;
+    updatedAt = new Date().toISOString();
+    broadcast({ type: "session_changed", ...state() });
+  });
+  pi.on("ui_prompt_end", (_event, ctx) => {
+    lastCtx = ctx;
+    waiting = false;
+    updatedAt = new Date().toISOString();
+    broadcast({ type: "session_changed", ...state() });
   });
   pi.on("message_end", (event, ctx) => {
     lastCtx = ctx;

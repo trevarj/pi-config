@@ -64,6 +64,8 @@
                 ${./extensions}/herdr-waiting.test.ts \
                 ${./extensions}/magit-diff.test.ts \
                 ${./extensions}/ollama-autostart.test.ts \
+                ${./extensions/organizer}/core.test.ts \
+                ${./extensions/organizer}/index.test.ts \
                 ${./extensions}/work-mode.test.ts \
                 ${./extensions/pi-usage}/test/claude.test.ts \
                 ${./extensions/trev-pi}/layout.test.ts
@@ -91,6 +93,7 @@
             --extension ${./extensions}/herdr-waiting.ts \
             --extension ${./extensions}/magit-diff.ts \
             --extension ${./extensions}/ollama-autostart.ts \
+            --extension ${./extensions/organizer} \
             --extension ${./extensions/trev-pi} \
             --extension ${./extensions}/work-mode.ts \
             --theme ${./extensions/trev-pi}/trev-pi.json \
