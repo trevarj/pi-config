@@ -12,15 +12,18 @@
 
 let
   agents = dotfilesConfigs + "/agents";
-  # pi-tui-kit is a library, not a loadable Pi package. It remains available
-  # from the pinned module root.
+  # pi-tui-kit is a library; pi-subagents is loaded through subagents-ui below.
+  # Both remain available from the pinned module root.
   piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") (
-    builtins.filter (name: name != "@narumitw/pi-tui-kit") extensionNames
+    builtins.filter (
+      name: name != "@narumitw/pi-tui-kit" && name != "@narumitw/pi-subagents"
+    ) extensionNames
   );
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
   trevPi = ./extensions/trev-pi;
   workMode = ./extensions/work-mode.ts;
   organizer = "${piExtensions}/lib/node_modules/@trevarj/organizer";
+  subagentsUi = "${piExtensions}/lib/node_modules/@trevarj/subagents-ui";
   organizerLauncher = pkgs.writeShellApplication {
     name = "pi-organizer";
     text = ''
@@ -115,6 +118,7 @@ let
           ./extensions/magit-diff.ts
           ./extensions/ollama-autostart.ts
           organizer
+          subagentsUi
           trevPi
           workMode
         ];

@@ -50,10 +50,11 @@ callPackage ../npm-bundle.nix { } {
         'return { kind: "deny" };'
 
       mkdir -p $out/lib/node_modules/@trevarj
-      # Keep local consumers inside this module root so externalized TUI Kit
+      # Keep local consumers inside this module root so externalized package
       # imports resolve against the same reviewed lockfile as packaged extensions.
       cp -r ${./organizer} $out/lib/node_modules/@trevarj/organizer
       cp -r ${./pi-usage} $out/lib/node_modules/@trevarj/pi-usage
+      cp -r ${./subagents-ui} $out/lib/node_modules/@trevarj/subagents-ui
       chmod -R u+w $out/lib/node_modules/@trevarj/pi-usage
       cd $out/lib/node_modules/@trevarj/pi-usage
       rm -rf dist

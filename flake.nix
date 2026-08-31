@@ -63,6 +63,7 @@
                 ${./extensions}/herdr-fork.test.ts \
                 ${./extensions}/magit-diff.test.ts \
                 ${./extensions}/ollama-autostart.test.ts \
+                ${./extensions/subagents-ui}/render.test.ts \
                 ${./extensions/organizer}/core.test.ts \
                 ${./extensions/organizer}/index.test.ts \
                 ${./extensions}/work-mode.test.ts \
@@ -92,7 +93,7 @@
             --extension ${piExtensions}/lib/node_modules/@narumitw/pi-goal \
             --extension ${piExtensions}/lib/node_modules/@narumitw/pi-herdr \
             --extension ${piExtensions}/lib/node_modules/@narumitw/pi-stamp \
-            --extension ${piExtensions}/lib/node_modules/@narumitw/pi-subagents \
+            --extension ${piExtensions}/lib/node_modules/@trevarj/subagents-ui \
             --extension ${./extensions}/herdr-fork.ts \
             --extension ${./extensions}/magit-diff.ts \
             --extension ${./extensions}/ollama-autostart.ts \
