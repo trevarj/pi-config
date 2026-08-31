@@ -188,9 +188,6 @@ test("sanitizes ANSI text and compact values", () => {
   assert.equal(compactPluginStatus("ponytail", "○ 🐴 ponytail: ⚡ FULL"), "🦄 ▰▰");
   const usage = "codex 80% 5h 20% wk \x1b[38;5;8m· ↻ Tue 14:30\x1b[39m";
   assert.equal(compactPluginStatus("usage", usage), usage);
-  assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Inactive"), "󰒋");
-  assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Active: typescript"), "󰒋");
-  assert.equal(compactPluginStatus("pi-lens-lsp", "LSP Failed: typescript"), "LSP Failed: typescript");
 });
 
 test("compacts goal status and ranks it ahead of decorative markers", () => {
@@ -203,7 +200,7 @@ test("compacts goal status and ranks it ahead of decorative markers", () => {
   assert.equal(compactPluginStatus("goal", "queued · automatic Unlimited"), "󰓾 queued Unlimited");
   assert.equal(compactPluginStatus("goal", "complete"), "󰓾 ✓");
   assert.equal(compactPluginStatus("goal", "something else"), "something else");
-  const names = ["caveman", "memory", "ponytail", "telegram", "usage", "work-mode", "goal", "pi-lens-lsp"];
+  const names = ["caveman", "memory", "ponytail", "telegram", "usage", "work-mode", "goal"];
   const sorted = names.sort((a, b) => statusRank(a) - statusRank(b) || a.localeCompare(b));
   assert.deepEqual(sorted, [
     "usage",
@@ -213,6 +210,5 @@ test("compacts goal status and ranks it ahead of decorative markers", () => {
     "telegram",
     "caveman",
     "ponytail",
-    "pi-lens-lsp",
   ]);
 });

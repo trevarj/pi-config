@@ -59,7 +59,6 @@ const STATUS_RANKS: Record<string, number> = {
   "work-mode": 2,
   caveman: 8,
   ponytail: 8,
-  "pi-lens-lsp": 9,
 };
 
 export function statusRank(name: string): number {
@@ -70,7 +69,6 @@ export function compactPluginStatus(name: string, status: string): string {
   // pi-usage styles only its reset suffix; preserve that intentional dim tone.
   if (name === "usage") return oneLine(status);
   const plain = oneLine(stripAnsi(status));
-  if (name === "pi-lens-lsp" && /^LSP (?:Active|Inactive)(?::.*)?$/i.test(plain)) return "󰒋";
   if (name === "goal") {
     // pi-goal formats: "active 12m · automatic 3/25", "paused · automatic
     // 3/25", "waiting <reason> · automatic 3/25", "complete". Keep the state

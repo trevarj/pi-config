@@ -12,10 +12,10 @@
 
 let
   agents = dotfilesConfigs + "/agents";
-  # pi-lens stays built but disabled by default; pi-tui-kit is a library, not
-  # a loadable Pi package. Both remain available from the pinned module root.
+  # pi-tui-kit is a library, not a loadable Pi package. It remains available
+  # from the pinned module root.
   piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") (
-    builtins.filter (name: name != "pi-lens" && name != "@narumitw/pi-tui-kit") extensionNames
+    builtins.filter (name: name != "@narumitw/pi-tui-kit") extensionNames
   );
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
   trevPi = ./extensions/trev-pi;
@@ -48,12 +48,6 @@ let
         "ls"
         "web_search"
         "fetch_content"
-        "lens_diagnostics"
-        "lsp_diagnostics"
-        "symbol_search"
-        "module_report"
-        "read_symbol"
-        "read_enclosing"
       ];
     }
   );
@@ -91,12 +85,6 @@ let
           "ls"
           "web_search"
           "fetch_content"
-          "lens_diagnostics"
-          "lsp_diagnostics"
-          "symbol_search"
-          "module_report"
-          "read_symbol"
-          "read_enclosing"
         ];
       };
       goal = {
@@ -165,10 +153,6 @@ in
   home = {
     packages = [ organizerLauncher ];
     file = {
-      ".pi-lens/config.json".text = builtins.toJSON {
-        ui.compactToolLine = true;
-        widget.visible = false;
-      };
       ".pi/agent/AGENTS.md".source = agents + "/.codex/AGENTS.md";
       ".pi/agent/APPEND_SYSTEM.md".source = agents + "/.pi/agent/APPEND_SYSTEM.md";
       ".pi/agent/models.json".source = ./config/models.json;
