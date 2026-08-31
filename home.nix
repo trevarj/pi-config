@@ -4,7 +4,6 @@
   piExtensions,
 }:
 {
-  herdrPiExtension ? null,
   includeOptionalApps ? true,
   lib,
   pkgs,
@@ -13,16 +12,15 @@
 
 let
   agents = dotfilesConfigs + "/agents";
-  # pi-lens is disabled by default: still built and pinned, but left out of
-  # the session package list. Re-enable by removing the filter, or ad hoc with
-  # `pi --extension <pi-extensions>/lib/node_modules/pi-lens`.
+  # pi-lens stays built but disabled by default; pi-tui-kit is a library, not
+  # a loadable Pi package. Both remain available from the pinned module root.
   piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") (
-    builtins.filter (name: name != "pi-lens") extensionNames
+    builtins.filter (name: name != "pi-lens" && name != "@narumitw/pi-tui-kit") extensionNames
   );
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
   trevPi = ./extensions/trev-pi;
   workMode = ./extensions/work-mode.ts;
-  organizer = ./extensions/organizer;
+  organizer = "${piExtensions}/lib/node_modules/@trevarj/organizer";
   organizerLauncher = pkgs.writeShellApplication {
     name = "pi-organizer";
     text = ''
@@ -39,7 +37,48 @@ let
   feedbackPrompts = ./config/prompts;
   settingsBase = builtins.fromJSON (builtins.readFile (agents + "/.pi/agent/settings.base.json"));
   webSearchBase = builtins.fromJSON (builtins.readFile (agents + "/.pi/web-search.json"));
-  workflowSettings = pkgs.writeText "pi-workflow.json" (
+  planModeSettings = pkgs.writeText "pi-plan-mode.json" (
+    builtins.toJSON {
+      thinkingLevel = "xhigh";
+      defaultPlanTools = [
+        "read"
+        "bash"
+        "grep"
+        "find"
+        "ls"
+        "web_search"
+        "fetch_content"
+        "lens_diagnostics"
+        "lsp_diagnostics"
+        "symbol_search"
+        "module_report"
+        "read_symbol"
+        "read_enclosing"
+      ];
+    }
+  );
+  goalSettings = pkgs.writeText "pi-goal.json" (
+    builtins.toJSON {
+      rpc.enabled = false;
+      continuationLimits = {
+        automaticTurns = 25;
+        noProgressTurns = 3;
+      };
+    }
+  );
+  # Remove only exact generated predecessors; customized files survive.
+  legacySubagentsSettings = pkgs.writeText "pi-subagents.json" ''
+    {
+      "backgroundByDefault": true,
+      "fallbackSubagent": "none",
+      "maxConcurrent": 4,
+      "maxConcurrentForeground": 1,
+      "maxSubagentDepth": 1,
+      "schedulingEnabled": false,
+      "workflowsEnabled": false
+    }
+  '';
+  legacyWorkflowSettings = pkgs.writeText "pi-workflow.json" (
     builtins.toJSON {
       workflow.planHandoff = "review";
       plan = {
@@ -85,7 +124,6 @@ let
         extensions = (settingsBase.extensions or [ ]) ++ [
           ./extensions/agentwire.ts
           ./extensions/herdr-fork.ts
-          ./extensions/herdr-waiting.ts
           ./extensions/magit-diff.ts
           ./extensions/ollama-autostart.ts
           organizer
@@ -134,7 +172,6 @@ in
       ".pi/agent/AGENTS.md".source = agents + "/.codex/AGENTS.md";
       ".pi/agent/APPEND_SYSTEM.md".source = agents + "/.pi/agent/APPEND_SYSTEM.md";
       ".pi/agent/models.json".source = ./config/models.json;
-      ".pi/agent/agents/organizer.md".source = ./config/organizer-agent.md;
       # Emacs-style bindings: prompt history on C-p/C-n (explicit history
       # bindings override model cycling in the editor) and C-h as backspace;
       # the rest of the Emacs set is already the default.
@@ -171,11 +208,6 @@ in
         ];
       };
       ".pi/agent/prompts".source = agents + "/.pi/agent/prompts";
-    }
-    // lib.optionalAttrs (herdrPiExtension != null) {
-      # Release-matched Herdr lifecycle/session reporter. Keep this in the
-      # auto-discovered path so `herdr integration status` sees it too.
-      ".pi/agent/extensions/herdr-agent-state.ts".source = herdrPiExtension;
     };
 
     # Pi rewrites settings.json in place, so install a writable generated copy.
@@ -187,8 +219,25 @@ in
         ${settings} "$HOME/.pi/agent/settings.json"
 
       workflow_path="$HOME/.pi/agent/pi-workflow.json"
-      if [[ ! -e "$workflow_path" && ! -L "$workflow_path" ]]; then
-        run ${pkgs.coreutils}/bin/install -Dm600 ${workflowSettings} "$workflow_path"
+      if [[ -f "$workflow_path" && ! -L "$workflow_path" ]] && \
+        ${pkgs.diffutils}/bin/cmp -s ${legacyWorkflowSettings} "$workflow_path"; then
+        run ${pkgs.coreutils}/bin/rm "$workflow_path"
+      fi
+
+      subagents_path="$HOME/.pi/agent/subagents.json"
+      if [[ -f "$subagents_path" && ! -L "$subagents_path" ]] && \
+        ${pkgs.diffutils}/bin/cmp -s ${legacySubagentsSettings} "$subagents_path"; then
+        run ${pkgs.coreutils}/bin/rm "$subagents_path"
+      fi
+
+      plan_path="$HOME/.pi/agent/pi-plan-mode.json"
+      if [[ ! -e "$plan_path" && ! -L "$plan_path" ]]; then
+        run ${pkgs.coreutils}/bin/install -Dm600 ${planModeSettings} "$plan_path"
+      fi
+
+      goal_path="$HOME/.pi/agent/pi-goal.json"
+      if [[ ! -e "$goal_path" && ! -L "$goal_path" ]]; then
+        run ${pkgs.coreutils}/bin/install -Dm600 ${goalSettings} "$goal_path"
       fi
     '';
   };

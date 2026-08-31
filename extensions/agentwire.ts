@@ -40,9 +40,6 @@ interface AgentwireContext {
 
 interface AgentwireExtensionAPI {
   on(event: string, handler: (event: Record<string, unknown>, ctx: AgentwireContext) => unknown): void;
-  // The cross-extension bus pi-subagents publishes lifecycle events on. Optional:
-  // pi builds without a bus (and the test doubles) simply report no subagents.
-  events?: { on(event: string, handler: (payload: unknown) => void): unknown };
   sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
   setModel(model: ModelInfo): void;
   setThinkingLevel(level: string): void;
@@ -180,110 +177,6 @@ export function serializeEntries(
   return { entries, leafId: messages.at(-1)?.id ?? null };
 }
 
-// --- subagent registry: pi-subagents lifecycle, condensed for the wire ---
-
-const SUBAGENT_DESCRIPTION_BYTES = 200;
-const SUBAGENT_TERMINAL_CAP = 10;
-const SUBAGENT_TERMINAL_MS = 5 * 60 * 1000;
-
-export type SubagentStatus = "queued" | "running" | "completed" | "failed";
-
-export interface SubagentEntry {
-  id: string;
-  type: string;
-  description: string;
-  status: SubagentStatus;
-  isBackground: boolean;
-  toolUses?: number;
-  durationMs?: number;
-  tokens?: number;
-}
-
-/** pi-subagents event names this registry tracks, mapped to the status each sets. */
-export const SUBAGENT_EVENTS: Record<string, SubagentStatus> = {
-  "subagents:created": "queued",
-  "subagents:started": "running",
-  "subagents:completed": "completed",
-  "subagents:failed": "failed",
-};
-
-export interface SubagentRegistry {
-  /** Returns true when the event changed the list, i.e. a broadcast is owed. */
-  apply(event: string, payload: unknown): boolean;
-  list(): SubagentEntry[];
-}
-
-/** Keep a number only when the payload actually carried one (`tokens` may be an object). */
-function finiteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-/**
- * Live view of this session's top-level subagents. Non-terminal agents are kept
- * indefinitely; finished ones are bounded twice over (a recency cap and an age
- * cutoff) so a long session cannot grow the frame without limit. `now` is
- * injected so expiry is testable without waiting.
- */
-export function createSubagentRegistry(now: () => number = Date.now): SubagentRegistry {
-  // Insertion-ordered. Settling re-inserts, so the terminal entries appear in
-  // settle order and the cap below can drop from the front.
-  const agents = new Map<string, SubagentEntry & { settledAt?: number }>();
-
-  const prune = () => {
-    const cutoff = now() - SUBAGENT_TERMINAL_MS;
-    const settled: string[] = [];
-    for (const agent of agents.values()) {
-      if (agent.settledAt === undefined) continue;
-      if (agent.settledAt <= cutoff) agents.delete(agent.id);
-      else settled.push(agent.id);
-    }
-    for (const id of settled.slice(0, Math.max(0, settled.length - SUBAGENT_TERMINAL_CAP))) {
-      agents.delete(id);
-    }
-  };
-
-  return {
-    apply(event, payload) {
-      const status = SUBAGENT_EVENTS[event];
-      if (!status || !payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-      const raw = payload as Record<string, unknown>;
-      const id = String(raw.id ?? "");
-      if (!id) return false;
-      // Scheduler and RPC spawns can surface as `started` without a prior
-      // `created`, so every tracked event may open the entry.
-      const previous = agents.get(id);
-      const entry: SubagentEntry & { settledAt?: number } = {
-        id,
-        type: String(raw.type ?? previous?.type ?? "agent"),
-        description: truncateText(
-          String(raw.description ?? previous?.description ?? ""),
-          SUBAGENT_DESCRIPTION_BYTES,
-        ),
-        status,
-        isBackground:
-          typeof raw.isBackground === "boolean" ? raw.isBackground : (previous?.isBackground ?? false),
-      };
-      if (status === "completed" || status === "failed") {
-        entry.settledAt = now();
-        const toolUses = finiteNumber(raw.toolUses);
-        const durationMs = finiteNumber(raw.durationMs);
-        const tokens = finiteNumber(raw.tokens);
-        if (toolUses !== undefined) entry.toolUses = toolUses;
-        if (durationMs !== undefined) entry.durationMs = durationMs;
-        if (tokens !== undefined) entry.tokens = tokens;
-        agents.delete(id);
-      }
-      agents.set(id, entry);
-      prune();
-      return true;
-    },
-    list() {
-      prune();
-      return [...agents.values()].map(({ settledAt: _settledAt, ...entry }) => entry);
-    },
-  };
-}
-
 // --- command dispatch: RPC-compatible surface over the socket ---
 
 export interface CommandPorts {
@@ -397,7 +290,6 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
   let startedAt = new Date().toISOString();
   let updatedAt = startedAt;
   let modelRegistry: { getAvailable(): ModelInfo[] } | undefined;
-  const subagents = createSubagentRegistry();
   const clients = new Set<Socket>();
   const path = socketPath();
   let server: Server | undefined;
@@ -419,9 +311,6 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
       startedAt,
       updatedAt,
       pid: process.pid,
-      // Carried by `hello` and `session_changed` so a late client does not have
-      // to wait for the next lifecycle event to learn about running agents.
-      subagents: subagents.list(),
     };
   };
 
@@ -568,15 +457,6 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
       output: truncateText(blockText(result?.content)),
     });
   });
-  // pi-subagents publishes top-level agent lifecycle on the shared bus; mirror it
-  // so clients can render the same list the TUI widget shows.
-  for (const event of Object.keys(SUBAGENT_EVENTS)) {
-    pi.events?.on(event, (payload) => {
-      if (subagents.apply(event, payload)) {
-        broadcast({ type: "subagent_update", agents: subagents.list() });
-      }
-    });
-  }
   pi.on("session_shutdown", () => {
     shutdown();
     lastCtx = undefined;

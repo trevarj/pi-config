@@ -61,7 +61,6 @@
               node --experimental-strip-types --test \
                 ${./extensions}/agentwire.test.ts \
                 ${./extensions}/herdr-fork.test.ts \
-                ${./extensions}/herdr-waiting.test.ts \
                 ${./extensions}/magit-diff.test.ts \
                 ${./extensions}/ollama-autostart.test.ts \
                 ${./extensions/organizer}/core.test.ts \
@@ -89,11 +88,15 @@
         runtime-smoke = pkgs.runCommand "pi-runtime-smoke" { } ''
           export HOME="$(mktemp -d)"
           ${piAgent}/bin/pi \
+            --extension ${piExtensions}/lib/node_modules/@narumitw/pi-plan-mode \
+            --extension ${piExtensions}/lib/node_modules/@narumitw/pi-goal \
+            --extension ${piExtensions}/lib/node_modules/@narumitw/pi-herdr \
+            --extension ${piExtensions}/lib/node_modules/@narumitw/pi-stamp \
+            --extension ${piExtensions}/lib/node_modules/@narumitw/pi-subagents \
             --extension ${./extensions}/herdr-fork.ts \
-            --extension ${./extensions}/herdr-waiting.ts \
             --extension ${./extensions}/magit-diff.ts \
             --extension ${./extensions}/ollama-autostart.ts \
-            --extension ${./extensions/organizer} \
+            --extension ${piExtensions}/lib/node_modules/@trevarj/organizer \
             --extension ${./extensions/trev-pi} \
             --extension ${./extensions}/work-mode.ts \
             --theme ${./extensions/trev-pi}/trev-pi.json \

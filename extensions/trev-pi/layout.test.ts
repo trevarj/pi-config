@@ -194,20 +194,20 @@ test("sanitizes ANSI text and compact values", () => {
 });
 
 test("compacts goal status and ranks it ahead of decorative markers", () => {
-  assert.equal(compactPluginStatus("workflow:goal", "active 12m · automatic 3/25"), "󰓾 3/25");
-  assert.equal(compactPluginStatus("workflow:goal", "paused · automatic 25/25"), "󰓾 paused 25/25");
+  assert.equal(compactPluginStatus("goal", "active 12m · automatic 3/25"), "󰓾 3/25");
+  assert.equal(compactPluginStatus("goal", "paused · automatic 25/25"), "󰓾 paused 25/25");
   assert.equal(
-    compactPluginStatus("workflow:goal", "waiting user reply · automatic 4/25"),
+    compactPluginStatus("goal", "waiting user reply · automatic 4/25"),
     "󰓾 waiting 4/25",
   );
-  assert.equal(compactPluginStatus("workflow:goal", "queued · automatic Unlimited"), "󰓾 queued Unlimited");
-  assert.equal(compactPluginStatus("workflow:goal", "complete"), "󰓾 ✓");
-  assert.equal(compactPluginStatus("workflow:goal", "something else"), "something else");
-  const names = ["caveman", "memory", "ponytail", "telegram", "usage", "work-mode", "workflow:goal", "pi-lens-lsp"];
+  assert.equal(compactPluginStatus("goal", "queued · automatic Unlimited"), "󰓾 queued Unlimited");
+  assert.equal(compactPluginStatus("goal", "complete"), "󰓾 ✓");
+  assert.equal(compactPluginStatus("goal", "something else"), "something else");
+  const names = ["caveman", "memory", "ponytail", "telegram", "usage", "work-mode", "goal", "pi-lens-lsp"];
   const sorted = names.sort((a, b) => statusRank(a) - statusRank(b) || a.localeCompare(b));
   assert.deepEqual(sorted, [
     "usage",
-    "workflow:goal",
+    "goal",
     "work-mode",
     "memory",
     "telegram",

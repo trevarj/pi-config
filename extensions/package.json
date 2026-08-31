@@ -6,14 +6,18 @@
   "license": "MIT",
   "dependencies": {
     "@dietrichgebert/ponytail": "4.9.0",
-    "@narumitw/pi-workflow": "0.6.1",
+    "@narumitw/pi-plan-mode": "0.56.0",
+    "@narumitw/pi-goal": "0.54.4",
+    "@narumitw/pi-herdr": "0.1.0",
+    "@narumitw/pi-stamp": "0.50.0",
+    "@narumitw/pi-tui-kit": "0.60.0",
     "pi-caveman": "1.0.8",
     "@gotgenes/pi-anthropic-auth": "2.0.6",
     "@llblab/pi-telegram": "0.38.0",
     "pi-lens": "4.1.1",
     "pi-memory": "0.4.2",
     "pi-simplify": "0.2.3",
-    "@tintinweb/pi-subagents": "0.19.0",
+    "@narumitw/pi-subagents": "3.0.0",
     "pi-web-access": "0.24.2"
   }
 }

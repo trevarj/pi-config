@@ -19,7 +19,7 @@ callPackage ../npm-bundle.nix { } {
   version = "1.0.0";
   root = ./.;
 
-  npmDepsHash = "sha256-8gdh1xNznpaRzcV43TVspJ1bDqm2lVflQWJ5DS2QF2c=";
+  npmDepsHash = "sha256-Y5+1iHfrUB2p2yprdwoc3rzXYU9TyZ2ZbzCCaG6TA7g=";
 
   extraAttrs = {
     # Every extension declares the pi core as a peer dependency. The installed
@@ -50,6 +50,9 @@ callPackage ../npm-bundle.nix { } {
         'return { kind: "deny" };'
 
       mkdir -p $out/lib/node_modules/@trevarj
+      # Keep local consumers inside this module root so externalized TUI Kit
+      # imports resolve against the same reviewed lockfile as packaged extensions.
+      cp -r ${./organizer} $out/lib/node_modules/@trevarj/organizer
       cp -r ${./pi-usage} $out/lib/node_modules/@trevarj/pi-usage
       chmod -R u+w $out/lib/node_modules/@trevarj/pi-usage
       cd $out/lib/node_modules/@trevarj/pi-usage

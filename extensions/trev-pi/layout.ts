@@ -52,10 +52,10 @@ export function oneLine(value: unknown): string {
 
 // Important statuses render first; decorative mode markers go last so the
 // tail truncation eats them before anything actionable (the goal status was
-// invisible for months because "workflow:goal" sorts alphabetically last).
+// invisible for months because the goal status sorts alphabetically last).
 const STATUS_RANKS: Record<string, number> = {
   usage: 0,
-  "workflow:goal": 1,
+  goal: 1,
   "work-mode": 2,
   caveman: 8,
   ponytail: 8,
@@ -71,8 +71,8 @@ export function compactPluginStatus(name: string, status: string): string {
   if (name === "usage") return oneLine(status);
   const plain = oneLine(stripAnsi(status));
   if (name === "pi-lens-lsp" && /^LSP (?:Active|Inactive)(?::.*)?$/i.test(plain)) return "󰒋";
-  if (name === "workflow:goal") {
-    // pi-workflow formats: "active 12m · automatic 3/25", "paused · automatic
+  if (name === "goal") {
+    // pi-goal formats: "active 12m · automatic 3/25", "paused · automatic
     // 3/25", "waiting <reason> · automatic 3/25", "complete". Keep the state
     // word (except the implied "active") and the turn counter.
     if (/^complete\b/i.test(plain)) return "󰓾 ✓";
