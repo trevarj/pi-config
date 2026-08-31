@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { allowsAutomaticUsageRefresh, UsageCache } from "../src/core.ts";
 import { formatUsageStatusline, formatWeeklyResetStatus } from "../src/format.ts";
 import { normalizeClaudeUsagePayload } from "../src/providers/claude.ts";
 import { normalizeGoogleAntigravityPayload } from "../src/providers/google-antigravity.ts";
 import { normalizeXaiBillingPayload } from "../src/providers/xai.ts";
+
+test("automatic usage refresh is TUI-only and cache entries can outlive the default TTL", () => {
+  assert.equal(allowsAutomaticUsageRefresh({ hasUI: true, mode: "tui" }), true);
+  assert.equal(allowsAutomaticUsageRefresh({ hasUI: true, mode: "rpc" }), false);
+  assert.equal(allowsAutomaticUsageRefresh({ hasUI: false, mode: "tui" }), false);
+
+  const cache = new UsageCache(300_000);
+  const report = { providerId: "anthropic" } as never;
+  cache.set("anthropic", "account", report, 1_000, 1_800_000);
+  assert.equal(cache.get("anthropic", "account", 301_000), report);
+  assert.equal(cache.get("anthropic", "account", 1_801_000), undefined);
+});
 
 test("Claude usage reports remaining five-hour and weekly limits", () => {
   const report = normalizeClaudeUsagePayload({

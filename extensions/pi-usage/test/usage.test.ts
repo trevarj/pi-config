@@ -509,6 +509,8 @@ test("automatic lifecycle refresh starts asynchronously", () => {
 	usageExtension(mock.pi);
 	const never = new Promise<never>(() => undefined);
 	const { ctx } = createMockContext({
+		hasUI: true,
+		mode: "tui",
 		model: openRouterModel,
 		modelRegistry: {
 			getProviderAuth: () => never,
@@ -520,6 +522,49 @@ test("automatic lifecycle refresh starts asynchronously", () => {
 	const result = mock.events.get("session_start")?.[0]?.({}, ctx);
 	assert.equal(result, undefined);
 	mock.events.get("session_shutdown")?.[0]?.({}, ctx);
+});
+
+test("RPC and headless lifecycle events do not query providers automatically", async (t) => {
+	const originalFetch = globalThis.fetch;
+	t.onTestFinished(() => {
+		globalThis.fetch = originalFetch;
+	});
+	let fetches = 0;
+	globalThis.fetch = async () => {
+		fetches += 1;
+		return usageFetch("https://openrouter.ai/api/v1/key");
+	};
+	const mock = createMockPi();
+	usageExtension(mock.pi);
+	const registry = {
+		getProviderAuth: async () => ({ auth: { apiKey: "openrouter-key" } }),
+		getAvailable: () => [openRouterModel],
+		getAll: () => [openRouterModel],
+	};
+	const contexts = [
+		createMockContext({
+			hasUI: true,
+			mode: "rpc",
+			model: openRouterModel,
+			modelRegistry: registry,
+		}).ctx,
+		createMockContext({
+			hasUI: false,
+			mode: "tui",
+			model: openRouterModel,
+			modelRegistry: registry,
+		}).ctx,
+	];
+
+	for (const ctx of contexts) {
+		mock.events.get("session_start")?.[0]?.({}, ctx);
+		mock.events.get("session_tree")?.[0]?.({}, ctx);
+		mock.events.get("model_select")?.[0]?.({ model: openRouterModel }, ctx);
+		mock.events.get("turn_start")?.[0]?.({}, ctx);
+	}
+	await settle();
+
+	assert.equal(fetches, 0);
 });
 
 test("TUI usage queries complete through the loader before opening the menu", async (t) => {
@@ -709,6 +754,8 @@ test("automatic status shows every configured provider with current first", asyn
 	const mock = createMockPi();
 	usageExtension(mock.pi);
 	const { ctx, statuses } = createMockContext({
+		hasUI: true,
+		mode: "tui",
 		model: codexModel,
 		modelRegistry: {
 			getProviderAuth: async (provider: string) => ({ auth: { apiKey: `${provider}-key` } }),
@@ -763,6 +810,8 @@ test("automatic provider failures back off instead of retrying every turn", asyn
 	const mock = createMockPi();
 	usageExtension(mock.pi);
 	const { ctx } = createMockContext({
+		hasUI: true,
+		mode: "tui",
 		model: openRouterModel,
 		modelRegistry: {
 			getProviderAuth: async () => ({ auth: { apiKey: "openrouter-key" } }),
@@ -813,7 +862,7 @@ test("a current command supersedes an older automatic query for the same provide
 	assert.ok(command);
 	const { ctx, statuses } = createMockContext({
 		hasUI: true,
-		mode: "rpc",
+		mode: "tui",
 		model: openRouterModel,
 		select: async () => "Close",
 		modelRegistry: {
@@ -828,6 +877,7 @@ test("a current command supersedes an older automatic query for the same provide
 	mock.events.get("session_start")?.[0]?.({}, ctx);
 	while (fetches < 1) await settle();
 	activeKey = "account-b";
+	Object.assign(ctx, { mode: "rpc" });
 	await command.handler("", ctx);
 	assert.equal(statuses.get("usage"), "openrouter $40.00 left");
 
@@ -905,11 +955,15 @@ test("session shutdown clears status through the shutdown context", async (t) =>
 	const mock = createMockPi();
 	usageExtension(mock.pi);
 	const { ctx: startContext } = createMockContext({
+		hasUI: true,
+		mode: "tui",
 		model: openRouterModel,
 		ui,
 		modelRegistry: registry,
 	});
 	const { ctx: shutdownContext } = createMockContext({
+		hasUI: true,
+		mode: "tui",
 		model: openRouterModel,
 		ui,
 		modelRegistry: registry,
@@ -948,7 +1002,7 @@ test("a slow command cannot overwrite status after the selected model changes", 
 	assert.ok(command);
 	const { ctx, statuses } = createMockContext({
 		hasUI: true,
-		mode: "rpc",
+		mode: "tui",
 		model: openRouterModel,
 		select: async () => choices.shift(),
 		modelRegistry: {
@@ -962,9 +1016,10 @@ test("a slow command cannot overwrite status after the selected model changes", 
 
 	mock.events.get("session_start")?.[0]?.({}, ctx);
 	await settle();
+	Object.assign(ctx, { mode: "rpc" });
 	const commandPromise = command.handler("", ctx);
 	while (openRouterFetches < 2) await settle();
-	Object.assign(ctx, { model: codexModel });
+	Object.assign(ctx, { mode: "tui", model: codexModel });
 	mock.events.get("model_select")?.[0]?.({ model: codexModel }, ctx);
 	await settle();
 	assert.equal(statuses.get("usage"), "codex 80% 5h");
@@ -1015,6 +1070,8 @@ test("statusline follows runtime auth changes and clears for unsupported selecte
 	const mock = createMockPi();
 	usageExtension(mock.pi);
 	const { ctx, statuses } = createMockContext({
+		hasUI: true,
+		mode: "tui",
 		model: openRouterModel,
 		modelRegistry: {
 			getProviderAuth: async () => ({ auth: { apiKey: activeKey } }),

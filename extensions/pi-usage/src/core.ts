@@ -1,8 +1,12 @@
 import { createHmac } from "node:crypto";
 import type { UsageReport } from "./types.js";
 
+export function allowsAutomaticUsageRefresh(ctx: { hasUI: boolean; mode: string }): boolean {
+	return ctx.hasUI && ctx.mode === "tui";
+}
+
 export class UsageCache {
-	private readonly entries = new Map<string, { createdAt: number; report: UsageReport }>();
+	private readonly entries = new Map<string, { expiresAt: number; report: UsageReport }>();
 	private readonly ttlMs: number;
 	private readonly maxEntries: number;
 
@@ -24,7 +28,14 @@ export class UsageCache {
 		return this.entries.get(cacheKey(providerId, fingerprint))?.report;
 	}
 
-	set(providerId: string, fingerprint: string, report: UsageReport, now = Date.now()): void {
+	set(
+		providerId: string,
+		fingerprint: string,
+		report: UsageReport,
+		now = Date.now(),
+		ttlMs = this.ttlMs,
+	): void {
+		if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error("Cache TTL must be positive.");
 		this.sweepExpired(now);
 		const key = cacheKey(providerId, fingerprint);
 		this.entries.delete(key);
@@ -33,7 +44,7 @@ export class UsageCache {
 			if (oldest === undefined) break;
 			this.entries.delete(oldest);
 		}
-		this.entries.set(key, { createdAt: now, report });
+		this.entries.set(key, { expiresAt: now + ttlMs, report });
 	}
 
 	clearProvider(providerId: string): void {
@@ -48,7 +59,7 @@ export class UsageCache {
 
 	private sweepExpired(now: number): void {
 		for (const [key, entry] of this.entries) {
-			if (now - entry.createdAt >= this.ttlMs) this.entries.delete(key);
+			if (now >= entry.expiresAt) this.entries.delete(key);
 		}
 	}
 }

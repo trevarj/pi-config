@@ -20,7 +20,13 @@ import {
 	resetOptionExpiration,
 	resolveCodexResetAuth,
 } from "./codex-resets.js";
-import { awaitWithDeadline, errorMessage, runWithConcurrency, UsageCache } from "./core.js";
+import {
+	allowsAutomaticUsageRefresh,
+	awaitWithDeadline,
+	errorMessage,
+	runWithConcurrency,
+	UsageCache,
+} from "./core.js";
 import {
 	formatProviderStates,
 	formatUsageStatusline,
@@ -52,6 +58,7 @@ import {
 } from "./usage-helpers.js";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const ANTHROPIC_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const ALL_PROVIDER_CONCURRENCY = 2;
 const FAILURE_BACKOFF_MS = 30_000;
@@ -117,11 +124,12 @@ export default function usageExtension(
 
 	const scheduleStatusRefresh = (ctx: ExtensionContext, model: PiModel) => {
 		clearStatusTimer();
+		if (!allowsAutomaticUsageRefresh(ctx)) return;
 		const generation = statusGeneration;
 		statusRefreshTimer = setTimeout(() => {
 			statusRefreshTimer = undefined;
 			if (!sessionActive || generation !== statusGeneration) return;
-			startStatusRefresh(ctx, model, true);
+			startStatusRefresh(ctx, model, false);
 		}, CACHE_TTL_MS);
 		statusRefreshTimer.unref?.();
 	};
@@ -283,7 +291,13 @@ export default function usageExtension(
 			const remainingMs = Math.max(1, DEFAULT_TIMEOUT_MS - (Date.now() - startedAt));
 			const report = await queryProviderUsage(adapter, auth, signal, remainingMs);
 			if (latestQueries.get(failureKey) === queryId) {
-				cache.set(adapter.id, auth.fingerprint, report);
+				cache.set(
+					adapter.id,
+					auth.fingerprint,
+					report,
+					Date.now(),
+					adapter.id === "anthropic" ? ANTHROPIC_TTL_MS : CACHE_TTL_MS,
+				);
 				failureBackoff.delete(failureKey);
 			}
 			return {
@@ -307,7 +321,10 @@ export default function usageExtension(
 				setBoundedMap(
 					failureBackoff,
 					failureKey,
-					{ until: now + FAILURE_BACKOFF_MS, message },
+					{
+						until: now + (adapter.id === "anthropic" ? ANTHROPIC_TTL_MS : FAILURE_BACKOFF_MS),
+						message,
+					},
 					MAX_ACCOUNT_STATES,
 				);
 			}
@@ -409,6 +426,13 @@ export default function usageExtension(
 			if (isStaleExtensionContextError(error) || isAbortError(error)) return;
 			safeSetStatus(ctx, "usage error");
 		});
+	};
+
+	const startAutomaticStatusRefresh = (
+		ctx: ExtensionContext,
+		model: PiModel | undefined,
+	) => {
+		if (allowsAutomaticUsageRefresh(ctx)) startStatusRefresh(ctx, model, false);
 	};
 
 	const runMenuOperation = async <T>(
@@ -1021,16 +1045,16 @@ export default function usageExtension(
 		activeControllers.clear();
 		statusController = undefined;
 		sessionActive = true;
-		startStatusRefresh(ctx, ctx.model, false);
+		startAutomaticStatusRefresh(ctx, ctx.model);
 	});
 	pi.on("session_tree", (_event, ctx) => {
-		startStatusRefresh(ctx, ctx.model, false);
+		startAutomaticStatusRefresh(ctx, ctx.model);
 	});
 	pi.on("model_select", (event, ctx) => {
-		startStatusRefresh(ctx, event.model, false);
+		startAutomaticStatusRefresh(ctx, event.model);
 	});
 	pi.on("turn_start", (_event, ctx) => {
-		startStatusRefresh(ctx, ctx.model, false);
+		startAutomaticStatusRefresh(ctx, ctx.model);
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		sessionActive = false;

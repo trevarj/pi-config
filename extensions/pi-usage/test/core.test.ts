@@ -41,15 +41,19 @@ test("credential fingerprints are process-salted, deterministic, and do not expo
 	assert.doesNotMatch(first, /secret/);
 });
 
-test("usage cache isolates identities, expires entries, and remains bounded", () => {
+test("usage cache isolates identities, honors per-entry TTLs, and remains bounded", () => {
 	const cache = new UsageCache(300_000, 4);
 	cache.set("openrouter", "account-a", report, 1_000);
+	cache.set("anthropic", "account-a", report, 1_000, 1_800_000);
 
 	assert.equal(cache.get("openrouter", "account-a", 1_001), report);
 	assert.equal(cache.get("openrouter", "account-b", 1_001), undefined);
 	assert.equal(cache.get("openai-codex", "account-a", 1_001), undefined);
 	assert.equal(cache.get("openrouter", "account-a", 301_001), undefined);
+	assert.equal(cache.get("anthropic", "account-a", 301_001), report);
+	assert.equal(cache.get("anthropic", "account-a", 1_801_000), undefined);
 	assert.equal(cache.size, 0);
+	assert.throws(() => cache.set("anthropic", "invalid", report, 1_000, 0), /positive/);
 
 	for (let index = 0; index < 10; index += 1) {
 		cache.set("openrouter", `account-${index}`, report, 400_000 + index);
