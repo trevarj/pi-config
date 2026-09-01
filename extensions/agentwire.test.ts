@@ -182,6 +182,7 @@ test("extension no-ops entirely under AGENTWIRE_SPAWNED", () => {
 test("serves hello, re-announce, and commands over the socket", async () => {
   process.env.XDG_RUNTIME_DIR = `${process.env.TMPDIR ?? "/tmp"}/agentwire-test-${process.pid}`;
   const handlers = new Map<string, (event: Record<string, unknown>, ctx: unknown) => unknown>();
+  const busHandlers = new Map<string, (data: unknown) => void>();
   const sent: unknown[][] = [];
   agentwire({
     on: (event, handler) => handlers.set(event, handler),
@@ -191,6 +192,10 @@ test("serves hello, re-announce, and commands over the socket", async () => {
     getThinkingLevel: () => "medium",
     setSessionName: () => {},
     getSessionName: () => "my-session",
+    events: {
+      on: (event, handler) => busHandlers.set(event, handler),
+      emit: () => {},
+    },
   });
   const ctx = {
     cwd: "/tmp/project",
@@ -240,8 +245,15 @@ test("serves hello, re-announce, and commands over the socket", async () => {
     assert.equal(hello.sessionName, "my-session");
     assert.equal(hello.busy, false);
     assert.equal(hello.waiting, false);
+    assert.deepEqual(hello.subagents, []);
     assert.equal(typeof hello.startedAt, "string");
     assert.equal(typeof hello.updatedAt, "string");
+    busHandlers.get("pi-agents:snapshot")?.({ agents: [{ id: "worker", status: "running", prompt: "omitted upstream" }] });
+    const agentChanged = await next();
+    assert.deepEqual(agentChanged.subagents, []);
+    busHandlers.get("pi-agents:snapshot")?.({ version: 1, agents: [{ id: "worker", name: "Worker", kind: "implementer", status: "running", prompt: "private" }] });
+    const safeAgentChanged = await next();
+    assert.deepEqual(safeAgentChanged.subagents, [{ id: "worker", name: "Worker", kind: "implementer", status: "running" }]);
     // A reconnecting client receives current session state again.
     handlers.get("session_info_changed")?.({}, ctx);
     const changed = await next();

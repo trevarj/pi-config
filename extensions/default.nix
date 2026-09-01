@@ -19,7 +19,7 @@ callPackage ../npm-bundle.nix { } {
   version = "1.0.0";
   root = ./.;
 
-  npmDepsHash = "sha256-uk0lU4w5ySBfQVX0llWFyllZ6FfvbqVmVZ9CHRBBBBM=";
+  npmDepsHash = "sha256-LZnNi/5OXbAqoXel1PdbRrdhRdFtXSETQo/aUTekDuc=";
 
   extraAttrs = {
     # Every extension declares the pi core as a peer dependency. The installed
@@ -53,6 +53,7 @@ callPackage ../npm-bundle.nix { } {
       # Keep local consumers inside this module root so externalized package
       # imports resolve against the same reviewed lockfile as packaged extensions.
       cp -r ${./organizer} $out/lib/node_modules/@trevarj/organizer
+      cp -r ${./pi-agents} $out/lib/node_modules/@trevarj/pi-agents
       cp -r ${./pi-usage} $out/lib/node_modules/@trevarj/pi-usage
       cp -r ${./pi-zentui} $out/lib/node_modules/@trevarj/pi-zentui
       chmod -R u+w $out/lib/node_modules/@trevarj/pi-usage

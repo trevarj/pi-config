@@ -12,11 +12,12 @@
 
 let
   agents = dotfilesConfigs + "/agents";
-  # pi-tui-kit is a library; all functional extension packages, including the
-  # stock pi-subagents package, load directly from the pinned module root.
+  # pi-tui-kit is a library; functional packages load directly from the pinned
+  # module root, while reviewed local packages are listed explicitly below.
   piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") (
     builtins.filter (name: name != "@narumitw/pi-tui-kit") extensionNames
   );
+  piAgents = "${piExtensions}/lib/node_modules/@trevarj/pi-agents";
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
   zentui = "${piExtensions}/lib/node_modules/@trevarj/pi-zentui";
   organizer = "${piExtensions}/lib/node_modules/@trevarj/organizer";
@@ -113,6 +114,7 @@ let
       settingsBase
       // {
         packages = piPackages ++ [
+          piAgents
           piUsage
           zentui
         ];

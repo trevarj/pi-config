@@ -46,6 +46,10 @@ interface AgentwireExtensionAPI {
   getThinkingLevel(): string;
   setSessionName(name: string): void;
   getSessionName(): string | undefined;
+  events?: {
+    on(event: string, handler: (data: unknown) => void): void;
+    emit(event: string, data: unknown): void;
+  };
 }
 
 // --- framing: strict LF-delimited JSONL, mirroring pi's RPC mode ---
@@ -290,6 +294,7 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
   let startedAt = new Date().toISOString();
   let updatedAt = startedAt;
   let modelRegistry: { getAvailable(): ModelInfo[] } | undefined;
+  let subagents: unknown[] = [];
   const clients = new Set<Socket>();
   const path = socketPath();
   let server: Server | undefined;
@@ -308,6 +313,7 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
       thinkingLevel: pi.getThinkingLevel(),
       busy,
       waiting,
+      subagents,
       startedAt,
       updatedAt,
       pid: process.pid,
@@ -379,6 +385,32 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     rmSync(path, { force: true });
   };
 
+  pi.events?.on("pi-agents:snapshot", (data) => {
+    const snapshot = data as { version?: unknown; agents?: unknown } | undefined;
+    subagents = snapshot?.version === 1 && Array.isArray(snapshot.agents)
+      ? snapshot.agents.slice(0, 20).flatMap((raw) => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+          const agent = raw as Record<string, unknown>;
+          if (typeof agent.id !== "string" || typeof agent.name !== "string" || typeof agent.status !== "string") return [];
+          const model = agent.model && typeof agent.model === "object" && !Array.isArray(agent.model)
+            ? agent.model as Record<string, unknown>
+            : undefined;
+          return [{
+            id: agent.id,
+            name: agent.name,
+            kind: typeof agent.kind === "string" ? agent.kind : undefined,
+            status: agent.status,
+            taskId: typeof agent.taskId === "string" ? agent.taskId : undefined,
+            model: model && typeof model.provider === "string" && typeof model.id === "string"
+              ? { provider: model.provider, id: model.id }
+              : undefined,
+          }];
+        })
+      : [];
+    updatedAt = new Date().toISOString();
+    broadcast({ type: "session_changed", ...state() });
+  });
+
   pi.on("session_start", (_event, ctx) => {
     lastCtx = ctx;
     modelRegistry = (ctx as unknown as { modelRegistry?: { getAvailable(): ModelInfo[] } })
@@ -388,6 +420,7 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     startedAt = new Date().toISOString();
     updatedAt = startedAt;
     listen();
+    pi.events?.emit("pi-agents:snapshot:request", {});
     broadcast({ type: "session_changed", ...state() });
   });
   pi.on("session_info_changed", (_event, ctx) => {

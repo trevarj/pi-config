@@ -68,6 +68,10 @@
               done
               ln -s ${piAgent}/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@types \
                 test-root/node_modules/@types
+              ln -s ${piAgent}/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox \
+                test-root/node_modules/typebox
+              cp -r ${piExtensions}/lib/node_modules/@trevarj/pi-agents \
+                test-root/packages/pi-agents
               cp -r ${piExtensions}/lib/node_modules/@trevarj/pi-zentui \
                 test-root/packages/pi-zentui
 
@@ -79,7 +83,25 @@
                 ${./extensions/organizer}/core.test.ts \
                 ${./extensions/organizer}/index.test.ts \
                 ${./extensions}/work-mode.test.ts \
-                ${./extensions/pi-usage}/test/claude.test.ts
+                ${./extensions/pi-usage}/test/claude.test.ts \
+                test-root/packages/pi-agents/test/*.test.ts
+
+              echo "typechecking local Pi agents"
+              (
+                cd test-root/packages/pi-agents
+                tsc --noEmit \
+                  --target ESNext \
+                  --module ESNext \
+                  --moduleResolution bundler \
+                  --strict \
+                  --skipLibCheck \
+                  --esModuleInterop \
+                  --resolveJsonModule \
+                  --isolatedModules \
+                  --allowImportingTsExtensions \
+                  --types node \
+                  *.ts test/*.ts
+              )
 
               echo "validating Zentui against Pi ${piAgent.version}"
               test "${piAgent.version}" = "0.84.4"
@@ -155,6 +177,7 @@
             ${nixpkgs.lib.concatMapStringsSep "\n            " (
               name: "${piExtensions}/lib/node_modules/${name}"
             ) (builtins.filter (name: name != "@narumitw/pi-tui-kit") extensionNames)}
+            ${piExtensions}/lib/node_modules/@trevarj/pi-agents
             ${piExtensions}/lib/node_modules/@trevarj/pi-usage
             ${piExtensions}/lib/node_modules/@trevarj/pi-zentui
             ${./extensions}/agentwire.ts
@@ -164,7 +187,8 @@
             ${piExtensions}/lib/node_modules/@trevarj/organizer
             ${./extensions}/work-mode.ts
           )
-          test -d ${piExtensions}/lib/node_modules/@narumitw/pi-subagents
+          test -d ${piExtensions}/lib/node_modules/@trevarj/pi-agents
+          test ! -e ${piExtensions}/lib/node_modules/@narumitw/pi-subagents
           extension_args=()
           for extension in "''${runtime_extensions[@]}"; do
             extension_args+=(--extension "$extension")
@@ -175,6 +199,68 @@
               --tui-mode "$mode" \
               --list-models >/dev/null
           done
+
+          echo "smoking child RPC extension without a provider call"
+          PI_BIN=${piAgent}/bin/pi \
+          PI_AGENTS_PATH=${piExtensions}/lib/node_modules/@trevarj/pi-agents \
+          ${pkgs.nodejs}/bin/node <<'EOF'
+          const { spawn } = require("node:child_process");
+          const child = spawn(process.env.PI_BIN, [
+            "--mode", "rpc", "--no-session", "--no-extensions",
+            "--extension", process.env.PI_AGENTS_PATH,
+          ], {
+            env: {
+              ...process.env,
+              PI_AGENTS_ROLE: "child",
+              PI_AGENTS_AGENT_ID: "smoke",
+              PI_AGENTS_TASK_ID: "smoke",
+              PI_AGENTS_IPC_FD: "3",
+              PI_OFFLINE: "1",
+            },
+            stdio: ["pipe", "pipe", "pipe", "pipe"],
+          });
+          let buffer = "";
+          let stderr = "";
+          const timeout = setTimeout(() => {
+            child.kill("SIGKILL");
+            throw new Error(`child RPC smoke timed out: ''${stderr}`);
+          }, 15_000);
+          child.stderr.on("data", (chunk) => { stderr += chunk; });
+          child.stdout.on("data", (chunk) => {
+            buffer += chunk;
+            for (;;) {
+              const newline = buffer.indexOf("\n");
+              if (newline < 0) break;
+              const line = buffer.slice(0, newline);
+              buffer = buffer.slice(newline + 1);
+              if (!line) continue;
+              const frame = JSON.parse(line);
+              if (frame.type === "extension_error") throw new Error(frame.error || "pi-agents child extension failed");
+              if (frame.id === "smoke-state") {
+                if (!frame.success) throw new Error(frame.error || "child RPC state smoke failed");
+                child.stdin.write(JSON.stringify({ id: "smoke-commands", type: "get_commands" }) + "\n");
+                continue;
+              }
+              if (frame.id !== "smoke-commands") continue;
+              if (!frame.success) throw new Error(frame.error || "child RPC command smoke failed");
+              const commands = frame.data?.commands ?? [];
+              if (!commands.some((command) => command.name === "pi-agents-child-status")) {
+                throw new Error(`pi-agents child command missing: ''${JSON.stringify(commands)}`);
+              }
+              clearTimeout(timeout);
+              child.kill("SIGTERM");
+            }
+          });
+          child.on("spawn", () => {
+            child.stdin.write(JSON.stringify({ id: "smoke-state", type: "get_state" }) + "\n");
+          });
+          child.on("close", (code, signal) => {
+            clearTimeout(timeout);
+            if (code !== 0 && code !== 143 && signal !== "SIGTERM") {
+              throw new Error(`child RPC smoke exited ''${code ?? signal}: ''${stderr}`);
+            }
+          });
+          EOF
           touch "$out"
         '';
 
