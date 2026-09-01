@@ -16,6 +16,12 @@
     "commit": "5ed286e8877b1b79e0a3d7fadbfe508b78684c32",
     "sourceSha256": "25ea8a11217a69bacff229297a31aa9ae73c071547da838d52392705d45590f9"
   },
+  "fork": {
+    "sourceSha256": "4eeea4723dd58d24e9cd30caaab50f16c6a6cccc11accf74651006130cae3d39",
+    "changes": [
+      "use the Powerline branch glyph U+E0A0 for broader font compatibility"
+    ]
+  },
   "files": [
     "extensions"
   ],

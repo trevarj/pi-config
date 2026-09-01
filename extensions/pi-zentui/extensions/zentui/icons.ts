@@ -66,7 +66,7 @@ export const ICON_GLYPH_KEYS = [
  */
 export const NERD_DEFAULT_ICONS: IconGlyphs = {
 	cwd: "",
-	git: "",
+	git: "",
 	ahead: "↑",
 	behind: "↓",
 	diverged: "⇕",

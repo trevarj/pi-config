@@ -209,7 +209,7 @@ Copy this example and change only the values you need. Optional editor source-aw
   "icons": {
     "mode": "auto",
     "cwd": "",
-    "git": "",
+    "git": "",
     "ahead": "↑",
     "behind": "↓",
     "diverged": "⇕",

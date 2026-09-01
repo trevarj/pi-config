@@ -111,6 +111,10 @@
               assert.equal(manifest.upstream.repository, "https://github.com/lmilojevicc/pi-zentui");
               assert.equal(manifest.upstream.commit, "5ed286e8877b1b79e0a3d7fadbfe508b78684c32");
               assert.equal(manifest.upstream.sourceSha256, "25ea8a11217a69bacff229297a31aa9ae73c071547da838d52392705d45590f9");
+              assert.equal(manifest.fork.sourceSha256, "4eeea4723dd58d24e9cd30caaab50f16c6a6cccc11accf74651006130cae3d39");
+              assert.deepEqual(manifest.fork.changes, [
+                "use the Powerline branch glyph U+E0A0 for broader font compatibility",
+              ]);
               assert.deepEqual(manifest.pi.extensions, ["./extensions"]);
               assert.equal(manifest.dependencies, undefined);
               assert.equal(manifest.optionalDependencies, undefined);
@@ -126,7 +130,7 @@
                   | cut -d' ' -f1
               )"
               echo "Zentui source hash: $source_hash"
-              test "$source_hash" = "25ea8a11217a69bacff229297a31aa9ae73c071547da838d52392705d45590f9"
+              test "$source_hash" = "4eeea4723dd58d24e9cd30caaab50f16c6a6cccc11accf74651006130cae3d39"
 
               cat >telegram-fail-closed.test.ts <<'EOF'
               import assert from "node:assert/strict";
