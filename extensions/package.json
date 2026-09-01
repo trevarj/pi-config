@@ -8,8 +8,6 @@
     "@dietrichgebert/ponytail": "4.9.0",
     "@narumitw/pi-plan-mode": "0.56.0",
     "@narumitw/pi-goal": "0.54.4",
-    "@narumitw/pi-herdr": "0.1.1",
-    "@narumitw/pi-stamp": "0.50.0",
     "@narumitw/pi-tui-kit": "0.60.0",
     "pi-caveman": "1.0.8",
     "@gotgenes/pi-anthropic-auth": "2.0.6",

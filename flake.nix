@@ -59,7 +59,7 @@
               ];
             }
             ''
-              mkdir -p test-root/node_modules/@earendil-works
+              mkdir -p test-root/node_modules/@earendil-works test-root/packages
               ln -s ${piAgent}/lib/node_modules/@earendil-works/pi-coding-agent \
                 test-root/node_modules/@earendil-works/pi-coding-agent
               for package in pi-agent-core pi-ai pi-client pi-protocol pi-telemetry pi-tui; do
@@ -68,15 +68,8 @@
               done
               ln -s ${piAgent}/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@types \
                 test-root/node_modules/@types
-              cp -r ${piExtensions}/lib/node_modules/@narumitw \
-                test-root/node_modules/@narumitw
-              ln -s ${piExtensions}/lib/node_modules/@trevarj \
-                test-root/node_modules/@trevarj
-              mkdir -p test-root/packages
-              cp -r ${piExtensions}/lib/node_modules/@trevarj/trev-pi \
-                test-root/packages/trev-pi
-              cp -r ${piExtensions}/lib/node_modules/@trevarj/subagents-ui \
-                test-root/packages/subagents-ui
+              cp -r ${piExtensions}/lib/node_modules/@trevarj/pi-zentui \
+                test-root/packages/pi-zentui
 
               node --experimental-strip-types --test \
                 ${./extensions}/agentwire.test.ts \
@@ -85,22 +78,56 @@
                 ${./extensions}/ollama-autostart.test.ts \
                 ${./extensions/organizer}/core.test.ts \
                 ${./extensions/organizer}/index.test.ts \
+                ${./extensions}/work-mode.test.ts \
                 ${./extensions/pi-usage}/test/claude.test.ts
-              for test_file in \
-                test-root/packages/subagents-ui/render.test.ts \
-                test-root/packages/trev-pi/layout.test.ts \
-                test-root/packages/trev-pi/menu.test.ts \
-                test-root/packages/trev-pi/mode.test.ts; do
-                output="test-root/$(basename "$test_file" .ts).mjs"
-                esbuild "$test_file" \
-                  --bundle \
-                  --format=esm \
-                  --packages=external \
-                  --platform=node \
-                  --outfile="$output"
-                node --test "$output"
-              done
-              tsc -p test-root/packages/trev-pi/tsconfig.json
+
+              echo "validating Zentui against Pi ${piAgent.version}"
+              test "${piAgent.version}" = "0.84.4"
+              (
+                cd test-root/packages/pi-zentui
+                tsc --noEmit \
+                  --target ESNext \
+                  --module ESNext \
+                  --moduleResolution bundler \
+                  --strict \
+                  --skipLibCheck \
+                  --esModuleInterop \
+                  --resolveJsonModule \
+                  --isolatedModules \
+                  --allowImportingTsExtensions \
+                  --types node \
+                  extensions/zentui/*.ts
+              )
+              echo "validating Zentui package metadata"
+              node <<'EOF'
+              const assert = require("node:assert/strict");
+              const fs = require("node:fs");
+              const manifest = JSON.parse(fs.readFileSync("test-root/packages/pi-zentui/package.json", "utf8"));
+              assert.equal(manifest.name, "@trevarj/pi-zentui");
+              assert.equal(manifest.version, "0.22.0");
+              assert.equal(manifest.private, true);
+              assert.equal(manifest.upstream.package, "pi-zentui");
+              assert.equal(manifest.upstream.version, "0.22.0");
+              assert.equal(manifest.upstream.repository, "https://github.com/lmilojevicc/pi-zentui");
+              assert.equal(manifest.upstream.commit, "5ed286e8877b1b79e0a3d7fadbfe508b78684c32");
+              assert.equal(manifest.upstream.sourceSha256, "25ea8a11217a69bacff229297a31aa9ae73c071547da838d52392705d45590f9");
+              assert.deepEqual(manifest.pi.extensions, ["./extensions"]);
+              assert.equal(manifest.dependencies, undefined);
+              assert.equal(manifest.optionalDependencies, undefined);
+              assert.equal(manifest.bundledDependencies, undefined);
+              EOF
+              echo "validated Zentui package metadata"
+              source_hash="$(
+                cd test-root/packages/pi-zentui
+                LC_ALL=C find LICENSE README.md docs extensions -type f -print0 \
+                  | LC_ALL=C sort -z \
+                  | xargs -0 sha256sum \
+                  | sha256sum \
+                  | cut -d' ' -f1
+              )"
+              echo "Zentui source hash: $source_hash"
+              test "$source_hash" = "25ea8a11217a69bacff229297a31aa9ae73c071547da838d52392705d45590f9"
+
               cat >telegram-fail-closed.test.ts <<'EOF'
               import assert from "node:assert/strict";
               import { getTelegramAuthorizationState } from "${piExtensions}/lib/node_modules/@llblab/pi-telegram/lib/config.ts";
@@ -120,20 +147,27 @@
 
         runtime-smoke = pkgs.runCommand "pi-runtime-smoke" { } ''
           export HOME="$(mktemp -d)"
+          runtime_extensions=(
+            ${nixpkgs.lib.concatMapStringsSep "\n            " (
+              name: "${piExtensions}/lib/node_modules/${name}"
+            ) (builtins.filter (name: name != "@narumitw/pi-tui-kit") extensionNames)}
+            ${piExtensions}/lib/node_modules/@trevarj/pi-usage
+            ${piExtensions}/lib/node_modules/@trevarj/pi-zentui
+            ${./extensions}/agentwire.ts
+            ${./extensions}/herdr-fork.ts
+            ${./extensions}/magit-diff.ts
+            ${./extensions}/ollama-autostart.ts
+            ${piExtensions}/lib/node_modules/@trevarj/organizer
+            ${./extensions}/work-mode.ts
+          )
+          test -d ${piExtensions}/lib/node_modules/@narumitw/pi-subagents
+          extension_args=()
+          for extension in "''${runtime_extensions[@]}"; do
+            extension_args+=(--extension "$extension")
+          done
           for mode in regular fullscreen; do
             ${piAgent}/bin/pi \
-              --extension ${piExtensions}/lib/node_modules/@narumitw/pi-plan-mode \
-              --extension ${piExtensions}/lib/node_modules/@narumitw/pi-goal \
-              --extension ${piExtensions}/lib/node_modules/@narumitw/pi-herdr \
-              --extension ${piExtensions}/lib/node_modules/@narumitw/pi-stamp \
-              --extension ${piExtensions}/lib/node_modules/@trevarj/subagents-ui \
-              --extension ${./extensions}/herdr-fork.ts \
-              --extension ${./extensions}/magit-diff.ts \
-              --extension ${./extensions}/ollama-autostart.ts \
-              --extension ${piExtensions}/lib/node_modules/@trevarj/organizer \
-              --extension ${piExtensions}/lib/node_modules/@trevarj/trev-pi \
-              --theme ${piExtensions}/lib/node_modules/@trevarj/trev-pi/trev-pi.json \
-              --use-theme trev-pi \
+              "''${extension_args[@]}" \
               --tui-mode "$mode" \
               --list-models >/dev/null
           done

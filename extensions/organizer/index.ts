@@ -48,7 +48,6 @@ type PiInvocation = { command: string; args: string[] };
 
 interface Ui {
   notify(message: string, type?: "info" | "warning" | "error"): void;
-  setStatus(key: string, value?: string): void;
 }
 
 interface Context {
@@ -219,23 +218,20 @@ export function registerOrganizer(pi: OrganizerApi, options: RuntimeOptions = {}
   let scheduler: BoundaryScheduler | undefined;
   let watcher: { close(): void } | undefined;
   let toastTimer: unknown;
-  let manualPublicationPending = false;
   let lastNotifiedSuccess: string | null = null;
   let currentSnapshot: { id: string; timestamp: string; runId: string; published: boolean; hasDataGaps: boolean } | undefined;
   let snapshotCalled = false;
 
   const notifyPublication = () => {
     if (!ctx || ctx.mode !== "tui") return;
-    manualPublicationPending ||= inFlight?.scheduled === false;
     if (toastTimer !== undefined) clearTimer(toastTimer);
     toastTimer = setTimer(() => {
       toastTimer = undefined;
       const success = readState(statePath).lastSuccessAt;
       if (success && success !== lastNotifiedSuccess) {
         lastNotifiedSuccess = success;
-        if (manualPublicationPending) ctx?.ui.notify("Organizer report updated", "info");
+        ctx?.ui.notify("Organizer report updated", "info");
       }
-      manualPublicationPending = false;
     }, 150);
   };
 
@@ -248,7 +244,6 @@ export function registerOrganizer(pi: OrganizerApi, options: RuntimeOptions = {}
       if (!run.scheduled) ctx?.ui.notify(`Organizer unavailable: ${sanitizeError(failure)}`, "warning");
     }
     inFlight = undefined;
-    ctx?.ui.setStatus("organizer", undefined);
     void run.lease.close();
     run.resolve(ok);
   };
@@ -282,12 +277,12 @@ export function registerOrganizer(pi: OrganizerApi, options: RuntimeOptions = {}
         controller,
         resolve: resolveRun,
       };
-      ctx?.ui.setStatus("organizer", scheduled ? "scheduled refresh" : "refreshing");
       starting = false;
       const extensionPath = join(dirname(fileURLToPath(import.meta.url)), "index.ts");
       const args = childArgs(lease.runId, extensionPath);
       const invocation = await (options.resolvePi ?? resolvePiInvocation)(args);
       if (!inFlight || inFlight.runId !== lease.runId) return settled;
+      if (!scheduled) ctx?.ui.notify("Organizer refresh started", "info");
       void pi.exec(invocation.command, invocation.args, {
         cwd: organizerCwd,
         timeout: ORGANIZER_TIMEOUT,
@@ -445,7 +440,6 @@ export function registerOrganizer(pi: OrganizerApi, options: RuntimeOptions = {}
     watcher = undefined;
     if (toastTimer !== undefined) clearTimer(toastTimer);
     toastTimer = undefined;
-    manualPublicationPending = false;
     const run = inFlight;
     inFlight = undefined;
     if (run) {
@@ -454,7 +448,6 @@ export function registerOrganizer(pi: OrganizerApi, options: RuntimeOptions = {}
       run.resolve(false);
     }
     starting = false;
-    ctx?.ui.setStatus("organizer", undefined);
     ctx = undefined;
   });
 }

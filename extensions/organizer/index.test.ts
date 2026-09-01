@@ -28,14 +28,7 @@ function harness(activeTools: string[] = ["read", "bash", ...ORGANIZER_TOOLS]) {
 }
 
 function context(cwd: string, notices: unknown[][] = []) {
-  return {
-    cwd,
-    mode: "tui",
-    ui: {
-      notify: (...args: unknown[]) => notices.push(args),
-      setStatus() {},
-    },
-  };
+  return { cwd, mode: "tui", ui: { notify: (...args: unknown[]) => notices.push(args) } };
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -80,7 +73,7 @@ test("commands render read-only Markdown report and status, reject outside statu
   assert.equal(closed, 1);
 });
 
-test("report watcher debounces routine publication without a toast and stops on shutdown", () => {
+test("report watcher debounces successful publication and stops on shutdown", () => {
   const dir = mkdtempSync(join(tmpdir(), "organizer-watch-"));
   const statePath = join(dir, "state.json");
   const h = harness();
@@ -101,7 +94,7 @@ test("report watcher debounces routine publication without a toast and stops on 
   watched?.();
   watched?.();
   timer?.();
-  assert.deepEqual(notices, []);
+  assert.deepEqual(notices, [["Organizer report updated", "info"]]);
   assert.ok(clears >= 1);
   h.lifecycle.get("session_shutdown")?.({}, ctx);
   assert.equal(closed, 1);
@@ -145,10 +138,11 @@ test("refresh uses bounded direct Pi child and requires persisted publication", 
   assert.deepEqual(closed, ["run-1"]);
 });
 
-test("child failure records bounded error and permits another refresh", async () => {
+test("child failure records bounded error, notifies safely, and permits another refresh", async () => {
   const dir = mkdtempSync(join(tmpdir(), "organizer-child-fail-"));
   const statePath = join(dir, "state.json");
   const h = harness();
+  const notices: unknown[][] = [];
   let run = 0;
   let attempts = 0;
   registerOrganizer(h.api, {
@@ -157,7 +151,7 @@ test("child failure records bounded error and permits another refresh", async ()
     resolvePi: async (args) => ({ command: "pi", args }),
   });
   h.api.exec = async () => { attempts += 1; throw new Error("failed\nAuthorization: secret"); };
-  const ctx = context("/project");
+  const ctx = context("/project", notices);
   h.lifecycle.get("session_start")?.({}, ctx);
   await h.commands.get("organizer").handler("refresh", ctx);
   await tick();
@@ -165,6 +159,8 @@ test("child failure records bounded error and permits another refresh", async ()
   await tick();
   assert.equal(attempts, 2);
   assert.ok(!readState(statePath).lastError?.includes("secret"));
+  assert.ok(notices.some(([message, level]) => level === "warning" && /Organizer unavailable/u.test(String(message))));
+  assert.ok(notices.every(([message]) => !String(message).includes("secret")));
 });
 
 test("shutdown aborts child, closes lease, and suppresses stale completion", async () => {

@@ -9,10 +9,9 @@ test("recognizes direct and locally proxied Ollama Cloud models", () => {
   assert.equal(isOllamaCloudModel({ provider: "ollama", id: "qwen3.5" }), false);
 });
 
-test("session shutdown aborts bounded model discovery and clears status", async () => {
+test("session shutdown aborts bounded model discovery", async () => {
   const originalFetch = globalThis.fetch;
   const handlers = new Map<string, (event: any, ctx: any) => unknown>();
-  const statuses: Array<string | undefined> = [];
   let tagsSignal: AbortSignal | undefined;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -29,10 +28,7 @@ test("session shutdown aborts bounded model discovery and clears status", async 
     } as never);
     const ctx = {
       model: { provider: "ollama", id: "qwen:cloud" },
-      ui: {
-        setStatus(_key: string, value?: string) { statuses.push(value); },
-        notify() {},
-      },
+      ui: { notify() {} },
     };
     const pending = handlers.get("session_start")?.({}, ctx) as Promise<void>;
     await new Promise((resolve) => setImmediate(resolve));
@@ -40,7 +36,6 @@ test("session shutdown aborts bounded model discovery and clears status", async 
     handlers.get("session_shutdown")?.({}, ctx);
     await pending;
     assert.equal(tagsSignal?.aborted, true);
-    assert.equal(statuses.at(-1), undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

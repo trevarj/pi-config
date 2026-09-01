@@ -25,8 +25,8 @@ async function isRunning(signal: AbortSignal): Promise<boolean> {
   }
 }
 
-async function startOllama(signal: AbortSignal): Promise<void> {
-  if (await isRunning(signal)) return;
+async function startOllama(signal: AbortSignal): Promise<boolean> {
+  if (await isRunning(signal)) return false;
   signal.throwIfAborted();
 
   const child = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
@@ -38,7 +38,7 @@ async function startOllama(signal: AbortSignal): Promise<void> {
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await delay(250, undefined, { signal });
-    if (await isRunning(signal)) return;
+    if (await isRunning(signal)) return true;
   }
   throw new Error(`Ollama did not become ready at ${host}`);
 }
@@ -56,24 +56,16 @@ export default function (pi: ExtensionAPI) {
   let sessionController = new AbortController();
   let preparationController = new AbortController();
   let generation = 0;
-  let lastContext: ExtensionContext | undefined;
-  let starting: Promise<void> | undefined;
+  let starting: Promise<boolean> | undefined;
 
-  const setStatus = (ctx: ExtensionContext, value: string | undefined) => {
+  const notify = (ctx: ExtensionContext, message: string, level: "info" | "error") => {
     try {
-      ctx.ui.setStatus("ollama", value);
+      ctx.ui.notify(message, level);
     } catch {
-      // Session replacement can stale an in-flight model preparation context.
+      // Session replacement owns subsequent UI.
     }
   };
-  const notifyError = (ctx: ExtensionContext, message: string) => {
-    try {
-      ctx.ui.notify(message, "error");
-    } catch {
-      // A replacement session owns subsequent UI.
-    }
-  };
-  const ensureServer = async (signal: AbortSignal) => {
+  const ensureServer = async (signal: AbortSignal): Promise<boolean> => {
     for (;;) {
       signal.throwIfAborted();
       if (!starting) {
@@ -85,8 +77,7 @@ export default function (pi: ExtensionAPI) {
       }
       const task = starting;
       try {
-        await task;
-        return;
+        return await task;
       } catch (error) {
         signal.throwIfAborted();
         if (!(error && typeof error === "object" && "name" in error && error.name === "AbortError")) {
@@ -101,17 +92,14 @@ export default function (pi: ExtensionAPI) {
     signal: AbortSignal,
     ownerGeneration: number,
   ) => {
-    const ownsStatus = () => ownerGeneration === generation && !signal.aborted;
-    if (!model || !isOllamaCloudModel(model)) {
-      if (ownsStatus()) setStatus(ctx, undefined);
-      return;
-    }
-
-    if (ownsStatus()) setStatus(ctx, `preparing ${model.id}`);
+    if (!model || !isOllamaCloudModel(model)) return;
+    const owns = () => ownerGeneration === generation && !signal.aborted;
     try {
-      await ensureServer(signal);
+      if (await ensureServer(signal)) {
+        if (owns()) notify(ctx, "Started Ollama server", "info");
+      }
       if (!await hasModel(model.id, signal)) {
-        if (ownsStatus()) setStatus(ctx, `pulling ${model.id}`);
+        if (owns()) notify(ctx, `Adding ${model.id} to Ollama`, "info");
         const result = await pi.exec("ollama", ["pull", model.id], {
           timeout: 120_000,
           signal,
@@ -119,19 +107,15 @@ export default function (pi: ExtensionAPI) {
         if (result.code !== 0) throw new Error(result.stderr || result.stdout || "ollama pull failed");
       }
     } catch (error) {
-      if (signal.aborted) return;
-      if (ownsStatus()) {
-        notifyError(ctx, `Failed to prepare Ollama: ${error instanceof Error ? error.message : String(error)}`);
+      if (!signal.aborted && owns()) {
+        notify(ctx, `Failed to prepare Ollama: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
-    } finally {
-      if (ownsStatus()) setStatus(ctx, undefined);
     }
   };
   const begin = (model: Model<Api> | undefined, ctx: ExtensionContext) => {
     preparationController.abort(new DOMException("Ollama preparation replaced", "AbortError"));
     preparationController = new AbortController();
     const ownerGeneration = ++generation;
-    lastContext = ctx;
     const signal = AbortSignal.any([sessionController.signal, preparationController.signal]);
     return prepare(model, ctx, signal, ownerGeneration);
   };
@@ -146,7 +130,5 @@ export default function (pi: ExtensionAPI) {
     generation += 1;
     preparationController.abort(new DOMException("Ollama session shut down", "AbortError"));
     sessionController.abort(new DOMException("Ollama session shut down", "AbortError"));
-    if (lastContext) setStatus(lastContext, undefined);
-    lastContext = undefined;
   });
 }

@@ -12,17 +12,15 @@
 
 let
   agents = dotfilesConfigs + "/agents";
-  # pi-tui-kit is a library; pi-subagents is loaded through subagents-ui below.
-  # Both remain available from the pinned module root.
+  # pi-tui-kit is a library; all functional extension packages, including the
+  # stock pi-subagents package, load directly from the pinned module root.
   piPackages = map (name: "${piExtensions}/lib/node_modules/${name}") (
-    builtins.filter (
-      name: name != "@narumitw/pi-tui-kit" && name != "@narumitw/pi-subagents"
-    ) extensionNames
+    builtins.filter (name: name != "@narumitw/pi-tui-kit") extensionNames
   );
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
-  trevPi = "${piExtensions}/lib/node_modules/@trevarj/trev-pi";
+  zentui = "${piExtensions}/lib/node_modules/@trevarj/pi-zentui";
   organizer = "${piExtensions}/lib/node_modules/@trevarj/organizer";
-  subagentsUi = "${piExtensions}/lib/node_modules/@trevarj/subagents-ui";
+  workMode = ./extensions/work-mode.ts;
   organizerLauncher = pkgs.writeShellApplication {
     name = "pi-organizer";
     text = ''
@@ -62,7 +60,8 @@ let
       };
     }
   );
-  stampSettings = pkgs.writeText "pi-stamp.json" (
+  # Comparison-only fingerprint of the rejected generated file; never install it.
+  legacyStampSettings = pkgs.writeText "pi-stamp.json" (
     builtins.toJSON {
       timeZone = "local";
       responseTiming = "duration";
@@ -113,9 +112,10 @@ let
     builtins.toJSON (
       settingsBase
       // {
-        packages = piPackages ++ [ piUsage ];
-        quietStartup = true;
-        tuiMode = "regular";
+        packages = piPackages ++ [
+          piUsage
+          zentui
+        ];
         compaction = {
           enabled = true;
           reserveTokens = 100000;
@@ -127,12 +127,9 @@ let
           ./extensions/magit-diff.ts
           ./extensions/ollama-autostart.ts
           organizer
-          subagentsUi
-          trevPi
+          workMode
         ];
         prompts = (settingsBase.prompts or [ ]) ++ [ feedbackPrompts ];
-        themes = (settingsBase.themes or [ ]) ++ [ "${trevPi}/trev-pi.json" ];
-        theme = "trev-pi";
       }
     )
   );
@@ -213,8 +210,12 @@ in
       ''}
       run ${pkgs.coreutils}/bin/install -Dm600 \
         ${settings} "$HOME/.pi/agent/settings.json"
-      run ${pkgs.coreutils}/bin/install -Dm600 \
-        ${stampSettings} "$HOME/.pi/agent/pi-stamp.json"
+
+      stamp_path="$HOME/.pi/agent/pi-stamp.json"
+      if [[ -f "$stamp_path" && ! -L "$stamp_path" ]] && \
+        ${pkgs.diffutils}/bin/cmp -s ${legacyStampSettings} "$stamp_path"; then
+        run ${pkgs.coreutils}/bin/rm "$stamp_path"
+      fi
 
       workflow_path="$HOME/.pi/agent/pi-workflow.json"
       if [[ -f "$workflow_path" && ! -L "$workflow_path" ]] && \

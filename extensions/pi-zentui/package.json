@@ -1,0 +1,32 @@
+{
+  "name": "@trevarj/pi-zentui",
+  "version": "0.22.0",
+  "private": true,
+  "description": "Local editable fork of pi-zentui",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lmilojevicc/pi-zentui.git"
+  },
+  "upstream": {
+    "package": "pi-zentui",
+    "version": "0.22.0",
+    "repository": "https://github.com/lmilojevicc/pi-zentui",
+    "commit": "5ed286e8877b1b79e0a3d7fadbfe508b78684c32",
+    "sourceSha256": "25ea8a11217a69bacff229297a31aa9ae73c071547da838d52392705d45590f9"
+  },
+  "files": [
+    "extensions"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.80.5",
+    "@earendil-works/pi-coding-agent": ">=0.80.5",
+    "@earendil-works/pi-tui": ">=0.80.5"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}
