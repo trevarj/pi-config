@@ -55,6 +55,7 @@ callPackage ../npm-bundle.nix { } {
       cp -r ${./organizer} $out/lib/node_modules/@trevarj/organizer
       cp -r ${./pi-usage} $out/lib/node_modules/@trevarj/pi-usage
       cp -r ${./subagents-ui} $out/lib/node_modules/@trevarj/subagents-ui
+      cp -r ${./trev-pi} $out/lib/node_modules/@trevarj/trev-pi
       chmod -R u+w $out/lib/node_modules/@trevarj/pi-usage
       cd $out/lib/node_modules/@trevarj/pi-usage
       rm -rf dist

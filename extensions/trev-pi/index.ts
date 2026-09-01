@@ -1,241 +1,110 @@
-import { basename } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
-  createBashToolDefinition,
-  createEditToolDefinition,
-  createFindToolDefinition,
-  createGrepToolDefinition,
-  createLsToolDefinition,
-  createReadToolDefinition,
-  createWriteToolDefinition,
-  CustomEditor,
   keyText,
   type ExtensionAPI,
   type ExtensionContext,
   type KeybindingsManager,
   type ReadonlyFooterDataProvider,
-  type Theme,
-  VERSION,
 } from "@earendil-works/pi-coding-agent";
+import type { TUI } from "@earendil-works/pi-tui";
+import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
 import {
-  Container,
-  type Component,
-  type EditorTheme,
-  type TUI,
-  truncateToWidth,
-  visibleWidth,
-  wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
+  dashboardDataFromContext,
+  registerWorkMode,
+  showDashboard,
+  type SessionOwner,
+} from "./menu.ts";
 import {
-  backgroundLine,
-  branchTelemetry,
-  compactPluginStatus,
+  buildFooterRows,
   contextTelemetry,
-  statusRank,
-  fitFooterParts,
-  oneLine,
-  parseGitHubNotificationCount,
+  projectName,
   promptCacheTelemetry,
-  shouldRefreshDirtyState,
-  shortenPath,
+  shouldRefreshGit,
   splitResourceCommands,
-  stripAnsi,
-  toolSubject,
-  toolSummary,
-  type BuiltInToolName,
-  type FooterPart,
-  type ToolResultLike,
-} from "./layout.ts";
-
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const EDITOR_BACKGROUND = "\x1b[48;2;37;42;52m"; // #252A34, subtle Nord shade.
-const TOOL_ICONS: Record<BuiltInToolName, string> = {
-  bash: "",
-  read: "󰈙",
-  edit: "",
-  write: "󰆓",
-  grep: "",
-  find: "󰱼",
-  ls: "",
-};
-const TOOL_NAMES = Object.keys(TOOL_ICONS) as BuiltInToolName[];
+  StartupDashboard,
+  statusRank,
+  TrevEditor,
+  type EditorView,
+  type HeaderData,
+} from "./presentation.ts";
+import { TelemetryCollector, type TelemetrySnapshot } from "./state.ts";
+import {
+  setupToolRenderers,
+  sharedAnimationClock,
+  ToolActivityController,
+} from "./tools.ts";
 
 interface UiState {
-  working: boolean;
-  spinnerFrame: number;
-  spinnerTimer?: ReturnType<typeof setInterval>;
-  errorTimer?: ReturnType<typeof setTimeout>;
+  generation: number;
+  owner: (SessionOwner & { controller: AbortController }) | undefined;
+  context: ExtensionContext | undefined;
+  collector: TelemetryCollector | undefined;
+  tui: TUI | undefined;
+  footerData: ReadonlyFooterDataProvider | undefined;
+  agentActive: boolean;
+  agentSince: number | undefined;
+  waiting: boolean;
+  waitingSince: number | undefined;
   errorUntil: number;
-  githubRefreshTimer?: ReturnType<typeof setInterval>;
-  githubNotifications?: number;
-  githubNotificationsFailed: boolean;
-  hasUserMessage: boolean;
-  branch: string | null;
-  dirty: boolean;
-  tui?: TUI;
-  footerData?: ReadonlyFooterDataProvider;
+  errorTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
-class SingleLine implements Component {
-  constructor(private readonly value: string) {}
-
-  render(width: number): string[] {
-    return width > 0 ? [truncateToWidth(this.value, width, "…")] : [];
-  }
-
-  invalidate(): void {}
+function emptyTelemetry(): TelemetrySnapshot {
+  return {
+    git: { kind: "loading" },
+    pullRequest: { kind: "loading" },
+    notifications: { kind: "loading" },
+    health: {
+      git: { id: "git", command: "git status --porcelain=v2 --branch", refresh: "not started", requests: 0, runs: 0, coalesced: 0, inFlight: false, queued: false },
+      "pull-request": { id: "pull-request", command: "gh pr view", refresh: "not started", requests: 0, runs: 0, coalesced: 0, inFlight: false, queued: false },
+      notifications: { id: "notifications", command: "gh api notifications", refresh: "not started", requests: 0, runs: 0, coalesced: 0, inFlight: false, queued: false },
+    },
+  };
 }
 
-function emptyComponent(): Component {
-  return new Container();
-}
-
-function isRail(line: string): boolean {
-  const plain = stripAnsi(line);
-  return plain.includes("─") && plain.replace(/[─↑↓0-9 ]/g, "") === "";
-}
-
-function scrollLabel(line: string | undefined): string {
-  const plain = stripAnsi(line ?? "");
-  const match = plain.match(/([↑↓])\s*(\d+)/);
-  return match ? ` ${match[1]} ${match[2]} ` : "";
-}
-
-function resourceLines(label: string, values: string[], width: number, theme: Theme, limit?: number): string[] {
-  const shown = limit === undefined ? values : values.slice(0, limit);
-  const suffix = limit !== undefined && values.length > shown.length ? " · …" : "";
-  const prefix = `${label.padEnd(10)} `;
-  const content = shown.length ? shown.join(" · ") + suffix : "none";
-  const wrapped = wrapTextWithAnsi(theme.fg("text", content), Math.max(1, width - visibleWidth(prefix)));
-  return wrapped.map((line, index) => (index === 0 ? theme.fg("muted", prefix) : " ".repeat(visibleWidth(prefix))) + line);
-}
-
-function projectName(ctx: ExtensionContext): string {
-  return basename(ctx.cwd) || shortenPath(ctx.cwd);
-}
-
-function modelName(ctx: ExtensionContext, includeProvider = false): string {
-  if (!ctx.model) return "no model";
-  return includeProvider ? `${ctx.model.provider}/${ctx.model.id}` : ctx.model.id;
+function currentActivity(state: UiState): "active" | "waiting" | "idle" {
+  if (state.waiting) return "waiting";
+  return state.agentActive ? "active" : "idle";
 }
 
 function titleFor(ctx: ExtensionContext): string {
-  return `π ${projectName(ctx)} · ${modelName(ctx)}`;
+  const session = ctx.sessionManager.getSessionName() ?? ctx.sessionManager.getSessionId().slice(0, 8);
+  const model = ctx.model?.id ?? "no model";
+  return sanitizeTerminalText(`π ${projectName(ctx)} · ${session} · ${model}`);
 }
 
-function contextText(ctx: ExtensionContext): string {
-  const usage = ctx.getContextUsage();
-  return contextTelemetry(usage?.tokens, usage?.contextWindow ?? ctx.model?.contextWindow);
-}
-
-function setupToolRenderers(pi: ExtensionAPI): void {
-  const factories = {
-    bash: createBashToolDefinition,
-    read: createReadToolDefinition,
-    edit: createEditToolDefinition,
-    write: createWriteToolDefinition,
-    grep: createGrepToolDefinition,
-    find: createFindToolDefinition,
-    ls: createLsToolDefinition,
-  } as const;
-  const cache = new Map<string, Record<BuiltInToolName, any>>();
-  const definitions = (cwd: string): Record<BuiltInToolName, any> => {
-    let value = cache.get(cwd);
-    if (!value) {
-      value = Object.fromEntries(TOOL_NAMES.map((name) => [name, factories[name](cwd)])) as Record<BuiltInToolName, any>;
-      cache.set(cwd, value);
-    }
-    return value;
-  };
-
-  for (const name of TOOL_NAMES) {
-    const original = definitions(process.cwd())[name];
-    pi.registerTool({
-      ...original,
-      renderShell: "self",
-      async execute(toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown, ctx: ExtensionContext) {
-        return definitions(ctx.cwd)[name].execute(toolCallId, params, signal, onUpdate, ctx);
-      },
-      renderCall(args: Record<string, unknown>, theme: Theme, context: any) {
-        if (context.expanded) {
-          const state = context.state as {
-            originalState?: Record<string, unknown>;
-            originalCall?: Component;
-          };
-          state.originalState ??= {};
-          const component = definitions(context.cwd)[name].renderCall?.(args, theme, {
-            ...context,
-            state: state.originalState,
-            lastComponent: state.originalCall,
-          }) ?? emptyComponent();
-          state.originalCall = component;
-          return component;
-        }
-        if (!context.isPartial && context.executionStarted) return emptyComponent();
-        const status = theme.fg("accent", "…");
-        const icon = theme.fg("accent", TOOL_ICONS[name]);
-        const title = theme.fg("toolTitle", theme.bold(name));
-        const subject = theme.fg("toolOutput", toolSubject(name, args));
-        return new SingleLine(`${status} ${icon}  ${title}  ${subject}`);
-      },
-      renderResult(result: ToolResultLike, options: { expanded: boolean; isPartial: boolean }, theme: Theme, context: any) {
-        const state = context.state as {
-          originalState?: Record<string, any>;
-          originalResult?: Component;
-        };
-        state.originalState ??= {};
-        if (options.expanded) {
-          const component = definitions(context.cwd)[name].renderResult?.(result, options, theme, {
-            ...context,
-            state: state.originalState,
-            lastComponent: state.originalResult,
-          }) ?? emptyComponent();
-          state.originalResult = component;
-          return component;
-        }
-        if (options.isPartial) return emptyComponent();
-        if (state.originalState.interval) {
-          clearInterval(state.originalState.interval);
-          state.originalState.interval = undefined;
-        }
-        const summary = toolSummary(name, context.args, result, context.isError);
-        const negative = context.isError || summary.negative;
-        const status = theme.fg(negative ? "error" : "success", negative ? "✗" : "✓");
-        const icon = theme.fg("accent", TOOL_ICONS[name]);
-        const title = theme.fg("toolTitle", theme.bold(name));
-        const subject = theme.fg("toolOutput", toolSubject(name, context.args));
-        const detail = theme.fg(negative ? "error" : "dim", summary.text);
-        return new SingleLine(`${status} ${icon}  ${title}  ${subject} · ${detail}`);
-      },
-    } as any);
-  }
-}
-
-export default function trevPi(pi: ExtensionAPI) {
-  setupToolRenderers(pi);
-
+export default function trevPi(pi: ExtensionAPI): void {
   const state: UiState = {
-    working: false,
-    spinnerFrame: 0,
+    generation: 0,
+    owner: undefined,
+    context: undefined,
+    collector: undefined,
+    tui: undefined,
+    footerData: undefined,
+    agentActive: false,
+    agentSince: undefined,
+    waiting: false,
+    waitingSince: undefined,
     errorUntil: 0,
-    githubNotificationsFailed: false,
-    hasUserMessage: false,
-    branch: null,
-    dirty: false,
+    errorTimer: undefined,
   };
-  let lastContext: ExtensionContext | undefined;
-  let dirtyRefreshGeneration = 0;
-  let githubRefreshGeneration = 0;
+  const toolActivity = new ToolActivityController();
+  const toolRenderers = setupToolRenderers(pi, toolActivity);
+  const workMode = registerWorkMode(pi, () => state.owner);
 
-  const stopSpinner = () => {
-    if (state.spinnerTimer) clearInterval(state.spinnerTimer);
-    state.spinnerTimer = undefined;
-  };
-  const stopGithubRefresh = () => {
-    if (state.githubRefreshTimer) clearInterval(state.githubRefreshTimer);
-    state.githubRefreshTimer = undefined;
-  };
   const requestRender = () => state.tui?.requestRender();
+  const owns = (ctx: ExtensionContext) =>
+    state.context?.sessionManager === ctx.sessionManager && state.owner?.isCurrent() === true;
+  const statuses = (): Array<[string, string]> => {
+    const values = new Map(state.footerData?.getExtensionStatuses() ?? []);
+    const mode = workMode.getMode();
+    if (!values.has("work-mode") && mode) values.set("work-mode", `mode ${mode}`);
+    return [...values.entries()].sort(([a], [b]) => statusRank(a) - statusRank(b) || a.localeCompare(b));
+  };
+  const telemetry = (): Readonly<TelemetrySnapshot> => state.collector?.get() ?? emptyTelemetry();
+  const refreshTitle = (ctx: ExtensionContext) => {
+    if (ctx.mode === "tui") ctx.ui.setTitle(titleFor(ctx));
+  };
   const flashError = () => {
     state.errorUntil = Date.now() + 1_500;
     if (state.errorTimer) clearTimeout(state.errorTimer);
@@ -245,339 +114,243 @@ export default function trevPi(pi: ExtensionAPI) {
     }, 1_500);
     requestRender();
   };
-  const refreshTitle = (ctx: ExtensionContext) => ctx.ui.setTitle(titleFor(ctx));
-  const refreshGithubNotifications = (ctx: ExtensionContext) => {
-    const generation = ++githubRefreshGeneration;
-    // gh's disk cache is shared by Pi sessions, avoiding normal duplicate API polls.
-    void pi.exec("gh", ["api", "notifications", "--paginate", "--cache", "5m", "--jq", "length"], { timeout: 30_000 })
-      .then(({ code, stdout }) => {
-        if (generation !== githubRefreshGeneration) return;
-        if (code !== 0) throw new Error("GitHub notification refresh failed");
-        state.githubNotifications = parseGitHubNotificationCount(stdout);
-        state.githubNotificationsFailed = false;
-        requestRender();
-      })
-      .catch(() => {
-        if (generation !== githubRefreshGeneration) return;
-        state.githubNotifications = undefined;
-        state.githubNotificationsFailed = true;
-        requestRender();
-      });
+  const stopSession = (restore = true) => {
+    const ctx = state.context;
+    state.generation += 1;
+    state.owner?.controller.abort();
+    state.owner = undefined;
+    state.collector?.stop();
+    state.collector = undefined;
+    toolActivity.clear();
+    toolRenderers.clear();
+    sharedAnimationClock.stop("trev-pi:agent");
+    if (state.errorTimer) clearTimeout(state.errorTimer);
+    state.errorTimer = undefined;
+    state.agentActive = false;
+    state.agentSince = undefined;
+    state.waiting = false;
+    state.waitingSince = undefined;
+    if (restore && ctx?.mode === "tui") {
+      ctx.ui.setHeader(undefined);
+      ctx.ui.setFooter(undefined);
+      ctx.ui.setEditorComponent(undefined);
+      ctx.ui.setWorkingVisible(true);
+      ctx.ui.setHiddenThinkingLabel();
+      ctx.ui.setTitle("pi");
+    }
+    state.context = undefined;
+    state.footerData = undefined;
+    state.tui = undefined;
   };
-  const refreshDirtyState = (ctx: ExtensionContext) => {
-    const generation = ++dirtyRefreshGeneration;
-    void pi.exec("git", ["status", "--porcelain"], { cwd: ctx.cwd, timeout: 5_000 })
-      .then(({ code, stdout }) => {
-        if (generation !== dirtyRefreshGeneration) return;
-        state.dirty = code === 0 && stdout.trim().length > 0;
-        requestRender();
-      })
-      .catch(() => {
-        if (generation !== dirtyRefreshGeneration) return;
-        state.dirty = false;
-        requestRender();
-      });
-  };
+
+  pi.registerCommand("dashboard", {
+    description: "Browse read-only runtime, session, workspace, and collector details",
+    handler: async (args, ctx) => {
+      if (args.trim()) {
+        ctx.ui.notify("/dashboard does not accept arguments.", "error");
+        return;
+      }
+      const owner = state.owner;
+      if (!owner || owner.signal.aborted || !owner.isCurrent()) {
+        ctx.ui.notify("/dashboard is unavailable because the session is closing.", "error");
+        return;
+      }
+      await showDashboard(ctx, owner, () => dashboardDataFromContext(
+        pi,
+        ctx,
+        telemetry(),
+        currentActivity(state),
+        statuses(),
+      ));
+    },
+  });
 
   pi.on("session_start", (_event, ctx) => {
-    lastContext = ctx;
-    state.hasUserMessage = ctx.sessionManager.getBranch().some(
-      (entry) => entry.type === "message" && entry.message.role === "user",
-    );
+    // Defensive replacement keeps exactly one generation, controller, and collector.
+    if (state.owner || state.context) stopSession(false);
+    const generation = ++state.generation;
+    const controller = new AbortController();
+    const owner: UiState["owner"] = {
+      generation,
+      controller,
+      signal: controller.signal,
+      isCurrent: () => state.owner?.generation === generation && !controller.signal.aborted,
+    };
+    state.owner = owner;
+    state.context = ctx;
+    state.agentActive = !ctx.isIdle();
+    state.agentSince = state.agentActive ? Date.now() : undefined;
+    state.waiting = false;
+    state.waitingSince = undefined;
+    state.errorUntil = 0;
+
+    if (ctx.hasUI) {
+      state.collector = new TelemetryCollector({
+        exec: (command, args, options) => pi.exec(command, args, options),
+        cwd: ctx.cwd,
+        signal: controller.signal,
+        isCurrent: owner.isCurrent,
+        onChange: requestRender,
+      });
+      state.collector.start();
+    }
     if (ctx.mode !== "tui") return;
-    state.dirty = false;
-    state.githubNotifications = undefined;
-    state.githubNotificationsFailed = false;
-    refreshDirtyState(ctx);
-    refreshGithubNotifications(ctx);
-    stopGithubRefresh();
-    state.githubRefreshTimer = setInterval(() => refreshGithubNotifications(ctx), 5 * 60_000);
 
     ctx.ui.setWorkingVisible(false);
-    ctx.ui.setHiddenThinkingLabel(`󰧑 reasoning hidden (${keyText("app.thinking.toggle")})`);
+    ctx.ui.setHiddenThinkingLabel(`reasoning hidden (${keyText("app.thinking.toggle")})`);
 
     ctx.ui.setFooter((tui, theme, footerData) => {
       state.tui = tui;
       state.footerData = footerData;
-      state.branch = footerData.getGitBranch();
       const unsubscribe = footerData.onBranchChange(() => {
-        state.branch = footerData.getGitBranch();
+        if (!owner.isCurrent()) return;
+        void state.collector?.refreshGit();
+        void state.collector?.refreshPullRequest();
         tui.requestRender();
       });
-
       return {
         dispose: unsubscribe,
         invalidate() {},
         render(width: number): string[] {
-          state.branch = footerData.getGitBranch();
-          const providerCount = footerData.getAvailableProviderCount();
-          const statuses = [...footerData.getExtensionStatuses().entries()]
-            .sort(([a], [b]) => statusRank(a) - statusRank(b) || a.localeCompare(b));
-          const thinking = pi.getThinkingLevel();
-          const styledModel = (includeProvider: boolean) =>
-            `${theme.fg("accent", "󰚩")} ${theme.fg("text", modelName(ctx, includeProvider))} ${theme.fg("dim", `· ${thinking}`)}`;
           const usage = ctx.getContextUsage();
-          const contextColor = usage?.percent !== null && usage?.percent !== undefined && usage.percent > 90
-            ? "error"
-            : usage?.percent !== null && usage?.percent !== undefined && usage.percent > 70
-              ? "warning"
-              : "dim";
-          const queue = ctx.hasPendingMessages();
-          const indent = width > 2 ? "  " : "";
-          const innerWidth = Math.max(1, width - visibleWidth(indent));
-          const separator = theme.fg("dim", "  ·  ");
-          const separatorWidth = visibleWidth(separator);
           const cache = promptCacheTelemetry(
-            ctx.sessionManager.getBranch().flatMap((entry) =>
-              entry.type === "message" ? [entry.message] : []
-            ),
+            ctx.sessionManager.getBranch().flatMap((entry) => entry.type === "message" ? [entry.message] : []),
             ctx.model?.provider,
             ctx.model?.id,
           );
-          const parts = (useShortLabels: boolean): FooterPart[] => [
-            { id: "model", text: styledModel(!useShortLabels && providerCount > 1), priority: 7 },
-            {
-              id: "project",
-              text: `${theme.fg("accent", "")} ${theme.fg("muted", projectName(ctx))}`,
-              priority: 1,
-            },
-            ...(state.branch ? [{ id: "branch", text: theme.fg("muted", branchTelemetry(state.branch, state.dirty)), priority: 2 } as FooterPart] : []),
-            { id: "context", text: theme.fg(contextColor, contextText(ctx)), priority: 6 },
-            ...(state.githubNotificationsFailed ? [{
-              id: "github",
-              text: theme.fg("error", " !"),
-              priority: 5,
-            } as FooterPart] : state.githubNotifications ? [{
-              id: "github",
-              text: theme.fg("warning", ` ${state.githubNotifications}`),
-              priority: 5,
-            } as FooterPart] : []),
-            ...(queue ? [{
-              id: "queue",
-              text: theme.fg("warning", useShortLabels ? "󰜎" : "󰜎 queued"),
-              priority: 3,
-            } as FooterPart] : []),
-            ...(cache ? [{
-              id: "cache",
-              text: theme.fg(cache.empty ? "warning" : "dim", cache.text),
-              priority: 4,
-            } as FooterPart] : []),
-          ];
-
-          const full = parts(false);
-          const fullWidth = full.reduce(
-            (sum, part, index) => sum + visibleWidth(part.text) + (index ? separatorWidth : 0),
-            0,
-          );
-          const fitted = fitFooterParts(
-            fullWidth <= innerWidth ? full : parts(true),
-            innerWidth,
-            visibleWidth,
-            separatorWidth,
-          );
-          const primary = truncateToWidth(fitted.map((part) => part.text).join(separator), innerWidth, "…");
-
-          const pluginValues = statuses.map(([name, text]) => compactPluginStatus(name, text));
-          const pluginPrefix = theme.fg("dim", "󰐱");
-          const plugins = truncateToWidth(
-            `${pluginPrefix}  ${pluginValues.length ? pluginValues.join(separator) : theme.fg("dim", "—")}`,
-            innerWidth,
-            "…",
-          );
-          const row = (content: string) => `${indent}${truncateToWidth(content, innerWidth, "…")}`;
-
-          return ["", row(primary), row(plugins)];
+          const values = statuses();
+          const activity = currentActivity(state);
+          const activitySince = activity === "waiting" ? state.waitingSince : activity === "active" ? state.agentSince : undefined;
+          return buildFooterRows({
+            now: Date.now(),
+            activity,
+            activitySince,
+            frame: sharedAnimationClock.frame,
+            provider: ctx.model?.provider ?? "none",
+            model: ctx.model?.id ?? "none",
+            thinking: pi.getThinkingLevel(),
+            context: contextTelemetry(usage?.tokens, usage?.contextWindow ?? ctx.model?.contextWindow),
+            cache,
+            providerUsage: values.find(([name]) => name === "usage")?.[1],
+            queued: ctx.hasPendingMessages(),
+            project: projectName(ctx),
+            session: ctx.sessionManager.getSessionName() ?? ctx.sessionManager.getSessionId().slice(0, 8),
+            telemetry: telemetry(),
+            statuses: values,
+          }, width, theme);
         },
       };
     });
 
     ctx.ui.setHeader((tui, theme) => {
       state.tui = tui;
-      return new (class implements Component {
-        private expanded = false;
-
-        setExpanded(expanded: boolean): void {
-          this.expanded = expanded;
-          tui.requestRender();
-        }
-
-        invalidate(): void {}
-
-        render(width: number): string[] {
-          const resources = splitResourceCommands(pi.getCommands().map((command) => ({
-            name: command.name,
-            source: command.source,
-          })));
-          const tools = [...pi.getActiveTools()].sort((a, b) => a.localeCompare(b));
-          const counts = `${resources.skills.length} skills · ${resources.commands.length} commands · ${resources.prompts.length} prompts · ${tools.length} tools`;
-          const identity = `π pi · ${projectName(ctx)} · ${modelName(ctx)}`;
-          if (state.hasUserMessage) return [truncateToWidth(theme.fg("accent", identity), width, "…")];
-          if (width < 60) return [truncateToWidth(theme.fg("accent", `π pi v${VERSION}`) + theme.fg("dim", ` · ${counts}`), width, "…")];
-
-          const logo = [
-            `${theme.fg("accent", "╭───╮")}  ${theme.bold(theme.fg("accent", "pi"))}${theme.fg("dim", `  v${VERSION}`)}`,
-            `${theme.fg("accent", "│ π │")}`,
-            `${theme.fg("accent", "╰───╯")}`,
-          ];
-          const branch = state.branch ? `  ${theme.fg("muted", ` ${state.branch}`)}` : "";
-          const project = `${theme.fg("accent", "")} ${theme.fg("text", projectName(ctx))}${branch}  ${theme.fg("dim", shortenPath(ctx.cwd))}`;
-          const model = `${theme.fg("accent", "󰚩")} ${theme.fg("text", modelName(ctx, true))} ${theme.fg("dim", `· ${pi.getThinkingLevel()}`)}`;
-          const lines = [...logo, "", truncateToWidth(project, width, "…"), truncateToWidth(model, width, "…"), ""];
-          lines.push(...resourceLines("skills", resources.skills, width, theme, this.expanded ? undefined : 6));
-          lines.push(...resourceLines("commands", resources.commands, width, theme, this.expanded ? undefined : 6));
-          if (this.expanded) {
-            lines.push(...resourceLines("prompts", resources.prompts, width, theme));
-            lines.push(...resourceLines("tools", tools, width, theme));
+      const keybindings = {
+        getKeys(binding: string): readonly string[] {
+          try {
+            return [keyText(binding as Parameters<typeof keyText>[0])];
+          } catch {
+            return [];
           }
-          lines.push(theme.fg("dim", counts));
-          if (!ctx.isProjectTrusted()) lines.push(theme.fg("warning", "󰌾 project resources disabled (untrusted)"));
-          lines.push("");
-          const hints = [
-            `${keyText("app.interrupt")} interrupt`,
-            "/ commands",
-            "! shell",
-            `${keyText("app.tools.expand")} details`,
-            `${keyText("app.thinking.toggle")} reasoning`,
-            `${keyText("app.model.select")} model`,
-            `${keyText("app.editor.external")} editor`,
-          ].join(" · ");
-          lines.push(...wrapTextWithAnsi(theme.fg("dim", hints), width));
-          return lines;
-        }
-      })();
+        },
+      } as Pick<KeybindingsManager, "getKeys">;
+      const getData = (): HeaderData => {
+        const resources = splitResourceCommands(pi.getCommands().map((command) => ({ name: command.name, source: command.source })));
+        return {
+          project: projectName(ctx),
+          cwd: ctx.cwd,
+          session: ctx.sessionManager.getSessionName() ?? "unnamed",
+          sessionId: ctx.sessionManager.getSessionId(),
+          provider: ctx.model?.provider ?? "none",
+          model: ctx.model?.id ?? "none",
+          thinking: pi.getThinkingLevel(),
+          trusted: ctx.isProjectTrusted(),
+          telemetry: telemetry(),
+          skills: resources.skills,
+          commands: resources.commands,
+          prompts: resources.prompts,
+          tools: [...pi.getActiveTools()].sort((a, b) => a.localeCompare(b)),
+        };
+      };
+      return new StartupDashboard(theme, keybindings, getData, () => tui.requestRender());
     });
 
-    class TrevEditor extends CustomEditor {
-      constructor(tui: TUI, editorTheme: EditorTheme, keybindings: KeybindingsManager) {
-        super(tui, editorTheme, keybindings, { paddingX: 0 });
-        state.tui = tui;
-      }
-
-      private promptColor(theme: Theme): (text: string) => string {
-        if (Date.now() < state.errorUntil) return (text) => theme.fg("error", text);
-        if (this.getText().trimStart().startsWith("!")) return (text) => theme.fg("bashMode", text);
-        if (state.working) return (text) => theme.fg("accent", text);
-        const level = pi.getThinkingLevel();
-        const token = {
-          off: "thinkingOff",
-          minimal: "thinkingMinimal",
-          low: "thinkingLow",
-          medium: "thinkingMedium",
-          high: "thinkingHigh",
-          xhigh: "thinkingXhigh",
-          max: "thinkingMax",
-        }[level] as Parameters<Theme["fg"]>[0];
-        return (text) => theme.fg(token, text);
-      }
-
-      render(width: number): string[] {
-        if (width < 10) return super.render(width);
-        const theme = ctx.ui.theme;
-        const color = this.promptColor(theme);
-        const contentWidth = Math.max(1, width - 4);
-        const base = super.render(contentWidth);
-        let divider = base.length - 1;
-        for (let index = base.length - 1; index > 0; index--) {
-          if (isRail(base[index])) {
-            divider = index;
-            break;
-          }
-        }
-        const editorLines = base.slice(1, divider);
-        const autocomplete = base.slice(divider + 1);
-        const output: string[] = [];
-        const panel = (line: string) => {
-          const clipped = truncateToWidth(line, width, "");
-          const padded = `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
-          return backgroundLine(padded, EDITOR_BACKGROUND);
-        };
-        output.push(panel(""));
-        const cursor = "\x1b[7m \x1b[0m";
-        editorLines.forEach((rawLine, index) => {
-          let line = rawLine;
-          if (index === 0 && this.getText() === "" && line.includes(cursor)) {
-            line = truncateToWidth(line.replace(cursor, `${cursor}${theme.fg("dim", "Ask Pi…")}`), contentWidth, "");
-          }
-          const gutter = index === 0
-            ? color(state.working ? `${SPINNER_FRAMES[state.spinnerFrame]} ` : "› ")
-            : "  ";
-          output.push(panel(`  ${gutter}${truncateToWidth(line, contentWidth, "")}`));
-        });
-        for (const line of autocomplete) {
-          output.push(panel(`    ${truncateToWidth(line, contentWidth, "")}`));
-        }
-        const down = scrollLabel(base[divider]);
-        if (down) {
-          const label = theme.fg("dim", down.trim());
-          output.push(panel(`    ${label}${" ".repeat(Math.max(0, width - 4 - visibleWidth(label)))}`));
-        }
-        output.push(panel(""));
-        return output;
-      }
-    }
-
-    ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => new TrevEditor(tui, editorTheme, keybindings));
+    ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
+      state.tui = tui;
+      const getView = (): EditorView => ({
+        activity: currentActivity(state),
+        frame: sharedAnimationClock.frame,
+        error: Date.now() < state.errorUntil,
+        queued: ctx.hasPendingMessages(),
+        thinking: pi.getThinkingLevel(),
+      });
+      return new TrevEditor(tui, editorTheme, keybindings, ctx.ui.theme, getView);
+    });
     refreshTitle(ctx);
   });
 
-  pi.on("message_start", (event) => {
-    if (event.message.role === "user") {
-      state.hasUserMessage = true;
-      requestRender();
-    }
-  });
-  pi.on("message_end", (event) => {
-    if (event.message.role === "assistant") {
-      const message = event.message as AssistantMessage;
-      if (message.stopReason === "error") flashError();
-    }
-  });
-  pi.on("agent_start", () => {
-    state.working = true;
-    stopSpinner();
-    state.spinnerTimer = setInterval(() => {
-      state.spinnerFrame = (state.spinnerFrame + 1) % SPINNER_FRAMES.length;
-      requestRender();
-    }, 80);
+  pi.on("agent_start", (_event, ctx) => {
+    if (!owns(ctx)) return;
+    state.agentActive = true;
+    state.agentSince ??= Date.now();
+    sharedAnimationClock.start("trev-pi:agent", requestRender);
     requestRender();
   });
-  pi.on("agent_end", () => {
-    state.working = false;
-    stopSpinner();
+  pi.on("agent_settled", (_event, ctx) => {
+    if (!owns(ctx)) return;
+    state.agentActive = false;
+    state.agentSince = undefined;
+    sharedAnimationClock.stop("trev-pi:agent");
+    void state.collector?.refreshGit();
+    void state.collector?.refreshPullRequest();
     requestRender();
+  });
+  pi.on("ui_prompt_start", (_event, ctx) => {
+    if (!owns(ctx)) return;
+    state.waiting = true;
+    state.waitingSince ??= Date.now();
+    requestRender();
+  });
+  pi.on("ui_prompt_end", (_event, ctx) => {
+    if (!owns(ctx)) return;
+    state.waiting = false;
+    state.waitingSince = undefined;
+    requestRender();
+  });
+  pi.on("message_end", (event, ctx) => {
+    if (!owns(ctx)) return;
+    if (event.message.role === "assistant" && (event.message as AssistantMessage).stopReason === "error") flashError();
+  });
+  pi.on("turn_end", (_event, ctx) => {
+    if (owns(ctx)) void state.collector?.refreshGit();
   });
   pi.on("tool_result", (event, ctx) => {
-    if (ctx.mode === "tui" && shouldRefreshDirtyState(event.toolName, event.input, event.isError)) {
-      refreshDirtyState(ctx);
-    }
+    if (!owns(ctx) || !shouldRefreshGit(event.toolName, event.input, event.isError)) return;
+    void state.collector?.refreshGit();
+    if (event.toolName === "bash") void state.collector?.refreshPullRequest();
   });
-  pi.on("tool_execution_end", (event) => {
-    if (event.isError) flashError();
+  pi.on("tool_execution_end", (event, ctx) => {
+    if (owns(ctx) && event.isError) flashError();
   });
-  pi.on("model_select", (_event, ctx) => {
-    if (ctx.mode === "tui") refreshTitle(ctx);
+  pi.on("session_tree", (_event, ctx) => {
+    if (!owns(ctx)) return;
+    void state.collector?.refreshGit();
+    void state.collector?.refreshPullRequest();
     requestRender();
   });
-  pi.on("thinking_level_select", () => requestRender());
-  pi.on("session_info_changed", (_event, ctx) => {
-    if (ctx.mode === "tui") refreshTitle(ctx);
+  pi.on("model_select", (_event, ctx) => {
+    if (!owns(ctx)) return;
+    refreshTitle(ctx);
+    requestRender();
   });
-  pi.on("session_shutdown", () => {
-    dirtyRefreshGeneration += 1;
-    githubRefreshGeneration += 1;
-    stopSpinner();
-    stopGithubRefresh();
-    if (state.errorTimer) clearTimeout(state.errorTimer);
-    state.errorTimer = undefined;
-    if (lastContext?.mode === "tui") {
-      lastContext.ui.setHeader(undefined);
-      lastContext.ui.setFooter(undefined);
-      lastContext.ui.setEditorComponent(undefined);
-      lastContext.ui.setWorkingVisible(true);
-      lastContext.ui.setHiddenThinkingLabel();
-      lastContext.ui.setTitle("pi");
-    }
-    state.tui = undefined;
-    state.footerData = undefined;
+  pi.on("thinking_level_select", (_event, ctx) => {
+    if (owns(ctx)) requestRender();
+  });
+  pi.on("session_info_changed", (_event, ctx) => {
+    if (!owns(ctx)) return;
+    refreshTitle(ctx);
+    requestRender();
+  });
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (!state.context || state.context.sessionManager === ctx.sessionManager) stopSession(true);
   });
 }

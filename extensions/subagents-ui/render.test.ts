@@ -17,6 +17,10 @@ test("summarizes waits without dumping result JSON", () => {
     summarizeSubagentResult("subagent_wait", { jobId: "job_1", state: "completed", timedOut: false, result: "large child output" }),
     { text: "job_1 · completed", tone: "success" },
   );
+  assert.deepEqual(
+    summarizeSubagentResult("subagent_cancel", { jobId: "job_1", state: "cancelled" }),
+    { text: "job_1 · cancelled", tone: "warning" },
+  );
 });
 
 test("summarizes inspected jobs and messages", () => {
@@ -33,6 +37,9 @@ test("summarizes inspected jobs and messages", () => {
   );
 });
 
-test("keeps full text only for expanded rendering", () => {
-  assert.equal(resultText([{ type: "text", text: "one" }, { type: "image" }, { type: "text", text: "two" }]), "one\ntwo");
+test("keeps sanitized full text only for expanded rendering", () => {
+  assert.equal(
+    resultText([{ type: "text", text: "one\x1b]0;bad\x07" }, { type: "image" }, { type: "text", text: "two\u202e" }]),
+    "one\ntwo",
+  );
 });

@@ -20,8 +20,7 @@ let
     ) extensionNames
   );
   piUsage = "${piExtensions}/lib/node_modules/@trevarj/pi-usage";
-  trevPi = ./extensions/trev-pi;
-  workMode = ./extensions/work-mode.ts;
+  trevPi = "${piExtensions}/lib/node_modules/@trevarj/trev-pi";
   organizer = "${piExtensions}/lib/node_modules/@trevarj/organizer";
   subagentsUi = "${piExtensions}/lib/node_modules/@trevarj/subagents-ui";
   organizerLauncher = pkgs.writeShellApplication {
@@ -61,6 +60,14 @@ let
         automaticTurns = 25;
         noProgressTurns = 3;
       };
+    }
+  );
+  stampSettings = pkgs.writeText "pi-stamp.json" (
+    builtins.toJSON {
+      timeZone = "local";
+      responseTiming = "duration";
+      assistantMetadata = "off";
+      toolStamps = false;
     }
   );
   # Remove only exact generated predecessors; customized files survive.
@@ -107,6 +114,8 @@ let
       settingsBase
       // {
         packages = piPackages ++ [ piUsage ];
+        quietStartup = true;
+        tuiMode = "regular";
         compaction = {
           enabled = true;
           reserveTokens = 100000;
@@ -120,7 +129,6 @@ let
           organizer
           subagentsUi
           trevPi
-          workMode
         ];
         prompts = (settingsBase.prompts or [ ]) ++ [ feedbackPrompts ];
         themes = (settingsBase.themes or [ ]) ++ [ "${trevPi}/trev-pi.json" ];
@@ -205,6 +213,8 @@ in
       ''}
       run ${pkgs.coreutils}/bin/install -Dm600 \
         ${settings} "$HOME/.pi/agent/settings.json"
+      run ${pkgs.coreutils}/bin/install -Dm600 \
+        ${stampSettings} "$HOME/.pi/agent/pi-stamp.json"
 
       workflow_path="$HOME/.pi/agent/pi-workflow.json"
       if [[ -f "$workflow_path" && ! -L "$workflow_path" ]] && \

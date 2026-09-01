@@ -28,7 +28,14 @@ function harness(activeTools: string[] = ["read", "bash", ...ORGANIZER_TOOLS]) {
 }
 
 function context(cwd: string, notices: unknown[][] = []) {
-  return { cwd, mode: "tui", ui: { notify: (...args: unknown[]) => notices.push(args) } };
+  return {
+    cwd,
+    mode: "tui",
+    ui: {
+      notify: (...args: unknown[]) => notices.push(args),
+      setStatus() {},
+    },
+  };
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -73,7 +80,7 @@ test("commands render read-only Markdown report and status, reject outside statu
   assert.equal(closed, 1);
 });
 
-test("report watcher debounces successful publication and stops on shutdown", () => {
+test("report watcher debounces routine publication without a toast and stops on shutdown", () => {
   const dir = mkdtempSync(join(tmpdir(), "organizer-watch-"));
   const statePath = join(dir, "state.json");
   const h = harness();
@@ -94,7 +101,7 @@ test("report watcher debounces successful publication and stops on shutdown", ()
   watched?.();
   watched?.();
   timer?.();
-  assert.deepEqual(notices, [["Organizer report updated", "info"]]);
+  assert.deepEqual(notices, []);
   assert.ok(clears >= 1);
   h.lifecycle.get("session_shutdown")?.({}, ctx);
   assert.equal(closed, 1);
@@ -177,6 +184,38 @@ test("shutdown aborts child, closes lease, and suppresses stale completion", asy
   await tick();
   h.lifecycle.get("session_shutdown")?.({}, ctx);
   assert.equal(signal?.aborted, true);
+  assert.deepEqual(closed, ["run-1"]);
+});
+
+test("shutdown during lease acquisition closes stale lease without starting child", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "organizer-acquire-shutdown-"));
+  const closed: string[] = [];
+  const h = harness();
+  let resolveLease!: (value: RunLease) => void;
+  const acquired = new Promise<RunLease>((resolve) => { resolveLease = resolve; });
+  let executions = 0;
+  registerOrganizer(h.api, {
+    statePath: join(dir, "state.json"),
+    reportPath: join(dir, "report.md"),
+    organizerDir: dir,
+    organizerCwd: join(dir, "cwd"),
+    watchDir: () => ({ close() {} }),
+    acquireLease: async () => acquired,
+    resolvePi: async (args) => ({ command: "pi", args }),
+  });
+  h.api.exec = async () => {
+    executions += 1;
+    return { stdout: "", stderr: "", code: 0, killed: false };
+  };
+  const ctx = context("/project");
+  h.lifecycle.get("session_start")?.({}, ctx);
+  await h.commands.get("organizer").handler("refresh", ctx);
+  await tick();
+  h.lifecycle.get("session_shutdown")?.({}, ctx);
+  resolveLease(lease("run-1", closed));
+  await tick();
+  await tick();
+  assert.equal(executions, 0);
   assert.deepEqual(closed, ["run-1"]);
 });
 

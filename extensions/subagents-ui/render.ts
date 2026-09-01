@@ -1,4 +1,7 @@
-export type RenderTone = "success" | "warning" | "error";
+import { sanitizeTerminalDocument } from "@narumitw/pi-tui-kit/terminal-document";
+import { sanitizeTerminalText } from "@narumitw/pi-tui-kit/terminal-text";
+
+export type RenderTone = "success" | "neutral" | "warning" | "error";
 
 export interface RenderSummary {
   text: string;
@@ -7,14 +10,17 @@ export interface RenderSummary {
 
 type RecordValue = Record<string, unknown>;
 
-const failedStates = new Set(["failed", "timed_out", "cancelled"]);
+const failedStates = new Set(["failed"]);
+const warningStates = new Set(["timed_out", "cancelled", "canceled", "interrupted"]);
 
 function record(value: unknown): RecordValue {
   return value && typeof value === "object" ? value as RecordValue : {};
 }
 
 function text(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  const sanitized = sanitizeTerminalText(value).replace(/\s+/gu, " ").trim();
+  return sanitized || undefined;
 }
 
 function count(value: number, singular: string): string {
@@ -64,7 +70,7 @@ export function summarizeSubagentResult(
     const omittedText = typeof omitted === "number" && omitted > 0 ? ` · ${omitted} omitted` : "";
     return {
       text: `${count(jobs.length, "job")}${stateText ? ` · ${stateText}` : ""}${omittedText}`,
-      tone: "success",
+      tone: jobs.length ? "success" : "neutral",
     };
   }
 
@@ -88,16 +94,19 @@ export function summarizeSubagentResult(
   }
 
   const summary = [jobId, state].filter(Boolean).join(" · ") || "done";
-  return { text: summary, tone: state && failedStates.has(state) ? "error" : "success" };
+  return {
+    text: summary,
+    tone: state && failedStates.has(state) ? "error" : state && warningStates.has(state) ? "warning" : "success",
+  };
 }
 
 export function resultText(content: unknown): string {
   if (!Array.isArray(content)) return "";
-  return content
+  return sanitizeTerminalDocument(content
     .map((part) => {
       const item = record(part);
       return item.type === "text" && typeof item.text === "string" ? item.text : "";
     })
     .filter(Boolean)
-    .join("\n");
+    .join("\n"));
 }
