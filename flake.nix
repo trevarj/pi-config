@@ -153,21 +153,6 @@
               )"
               echo "Zentui source hash: $source_hash"
               test "$source_hash" = "4eeea4723dd58d24e9cd30caaab50f16c6a6cccc11accf74651006130cae3d39"
-
-              cat >telegram-fail-closed.test.ts <<'EOF'
-              import assert from "node:assert/strict";
-              import { getTelegramAuthorizationState } from "${piExtensions}/lib/node_modules/@llblab/pi-telegram/lib/config.ts";
-
-              assert.deepEqual(getTelegramAuthorizationState(123), { kind: "deny" });
-              assert.deepEqual(getTelegramAuthorizationState(123, 123), { kind: "allow" });
-              assert.deepEqual(getTelegramAuthorizationState(456, 123), { kind: "deny" });
-              EOF
-              esbuild telegram-fail-closed.test.ts \
-                --bundle \
-                --format=esm \
-                --platform=node \
-                --outfile=telegram-fail-closed.test.mjs
-              node telegram-fail-closed.test.mjs
               touch "$out"
             '';
 

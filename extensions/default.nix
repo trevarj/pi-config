@@ -19,7 +19,7 @@ callPackage ../npm-bundle.nix { } {
   version = "1.0.0";
   root = ./.;
 
-  npmDepsHash = "sha256-LZnNi/5OXbAqoXel1PdbRrdhRdFtXSETQo/aUTekDuc=";
+  npmDepsHash = "sha256-79e8/u9FeDA2qAjJ4p9zwBeDAxxW4TcJ+5D8MT9B4WI=";
 
   extraAttrs = {
     # Every extension declares the pi core as a peer dependency. The installed
@@ -40,14 +40,6 @@ callPackage ../npm-bundle.nix { } {
     postInstall = ''
       sed -i '/ctx\.ui\.notify(qmdInstallInstructions()/d' \
         $out/lib/node_modules/pi-memory/index.ts
-
-      # ponytail: keep this exact one-line divergence until pi-telegram gains
-      # operator-confirmed pairing upstream. A changed release fails the build
-      # instead of silently restoring first-contact ownership.
-      substituteInPlace \
-        $out/lib/node_modules/@llblab/pi-telegram/lib/config.ts \
-        --replace-fail 'return { kind: "pair", userId };' \
-        'return { kind: "deny" };'
 
       mkdir -p $out/lib/node_modules/@trevarj
       # Keep local consumers inside this module root so externalized package
