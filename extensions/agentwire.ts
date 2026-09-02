@@ -30,6 +30,7 @@ interface AgentwireContext {
   model?: ModelInfo | null;
   isIdle(): boolean;
   abort(): void;
+  setTimeout(callback: () => void, ms?: number): unknown;
   getContextUsage(): { tokens: number; contextWindow: number; percent: number } | undefined;
   sessionManager: {
     getSessionFile(): string | null;
@@ -41,10 +42,10 @@ interface AgentwireContext {
 interface AgentwireExtensionAPI {
   on(event: string, handler: (event: Record<string, unknown>, ctx: AgentwireContext) => unknown): void;
   sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
-  setModel(model: ModelInfo): void;
+  setModel(model: ModelInfo): void | boolean | Promise<void | boolean>;
   setThinkingLevel(level: string): void;
   getThinkingLevel(): string;
-  setSessionName(name: string): void;
+  setSessionName(name: string): void | Promise<void>;
   getSessionName(): string | undefined;
   events?: {
     on(event: string, handler: (data: unknown) => void): void;
@@ -190,16 +191,16 @@ export interface CommandPorts {
   abort(): void;
   entries(since?: string, limit?: number, tail?: boolean): { entries: Record<string, unknown>[]; leafId: string | null };
   availableModels(): ModelInfo[];
-  setModel(provider: string, modelId: string): void;
+  setModel(provider: string, modelId: string): void | boolean | Promise<void | boolean>;
   setThinkingLevel(level: string): void;
-  setSessionName(name: string): void;
+  setSessionName(name: string): void | Promise<void>;
   stats(): Record<string, unknown>;
 }
 
-export function handleCommand(
+export async function handleCommand(
   command: Record<string, unknown>,
   ports: CommandPorts,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const id = command.id;
   const type = String(command.type ?? "");
   const respond = (success: boolean, extra: Record<string, unknown> = {}) => ({
@@ -251,14 +252,19 @@ export function handleCommand(
             })),
           },
         });
-      case "set_model":
-        ports.setModel(String(command.provider ?? ""), String(command.modelId ?? ""));
+      case "set_model": {
+        const provider = String(command.provider ?? "");
+        const modelId = String(command.modelId ?? "");
+        if (await ports.setModel(provider, modelId) === false) {
+          return respond(false, { error: `model unavailable: ${provider}/${modelId}` });
+        }
         return respond(true);
+      }
       case "set_thinking_level":
         ports.setThinkingLevel(String(command.level ?? ""));
         return respond(true);
       case "set_session_name":
-        ports.setSessionName(String(command.name ?? ""));
+        await ports.setSessionName(String(command.name ?? ""));
         return respond(true);
       case "get_session_stats":
         return respond(true, { data: ports.stats() });
@@ -272,20 +278,23 @@ export function handleCommand(
 
 // --- socket path ---
 
-export function socketDir(env: NodeJS.ProcessEnv = process.env): string {
+export function socketDir(
+  env: NodeJS.ProcessEnv = process.env,
+  backend: "pi" | "omp" = "pi",
+): string {
   const runtime = env.XDG_RUNTIME_DIR;
-  return join(runtime && runtime.startsWith("/") ? runtime : tmpdir(), "agentwire", "pi");
+  return join(runtime && runtime.startsWith("/") ? runtime : tmpdir(), "agentwire", backend);
 }
 
-export function socketPath(pid = process.pid): string {
-  return join(socketDir(), `${pid}-${randomUUID()}.sock`);
+export function socketPath(pid = process.pid, backend: "pi" | "omp" = "pi"): string {
+  return join(socketDir(process.env, backend), `${pid}-${randomUUID()}.sock`);
 }
 
 // --- extension runtime ---
 
-export default function agentwire(pi: AgentwireExtensionAPI) {
-  // Bridge-owned `pi --mode rpc` subprocesses are driven over stdio by the
-  // bridge itself; a second registration here would list them twice.
+function agentwire(pi: AgentwireExtensionAPI, backend: "pi" | "omp") {
+  // Bridge-owned RPC subprocesses are driven over stdio by the bridge itself;
+  // a second registration here would list them twice.
   if (process.env.AGENTWIRE_SPAWNED === "1") return;
 
   let lastCtx: AgentwireContext | undefined;
@@ -296,13 +305,14 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
   let modelRegistry: { getAvailable(): ModelInfo[] } | undefined;
   let subagents: unknown[] = [];
   const clients = new Set<Socket>();
-  const path = socketPath();
+  const path = socketPath(process.pid, backend);
   let server: Server | undefined;
 
   const state = (): Record<string, unknown> => {
     const sessionFile = lastCtx?.sessionManager.getSessionFile() ?? null;
     const model = lastCtx?.model ?? null;
     return {
+      backend,
       sessionId:
         lastCtx?.sessionManager.getSessionId?.() ??
         (sessionFile ? sessionFile.replace(/^.*\//, "").replace(/\.jsonl$/, "") : null),
@@ -339,7 +349,7 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
         (candidate) => candidate.provider === provider && candidate.id === modelId,
       );
       if (!model) throw new Error(`model not found: ${provider}/${modelId}`);
-      pi.setModel(model);
+      return pi.setModel(model);
     },
     setThinkingLevel: (level) => pi.setThinkingLevel(level),
     setSessionName: (name) => pi.setSessionName(name),
@@ -348,7 +358,7 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
 
   const listen = () => {
     if (server) return;
-    mkdirSync(socketDir(), { recursive: true, mode: 0o700 });
+    mkdirSync(socketDir(process.env, backend), { recursive: true, mode: 0o700 });
     rmSync(path, { force: true });
     server = createServer((socket) => {
       clients.add(socket);
@@ -366,7 +376,9 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
           );
           return;
         }
-        socket.write(encodeFrame(handleCommand(command, ports)));
+        void handleCommand(command, ports).then((response) => {
+          socket.write(encodeFrame(response));
+        });
       });
       socket.on("data", decode);
       const drop = () => clients.delete(socket);
@@ -385,7 +397,7 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     rmSync(path, { force: true });
   };
 
-  pi.events?.on("pi-agents:snapshot", (data) => {
+  if (backend === "pi") pi.events?.on("pi-agents:snapshot", (data) => {
     const snapshot = data as { version?: unknown; agents?: unknown } | undefined;
     subagents = snapshot?.version === 1 && Array.isArray(snapshot.agents)
       ? snapshot.agents.slice(0, 20).flatMap((raw) => {
@@ -420,21 +432,31 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     startedAt = new Date().toISOString();
     updatedAt = startedAt;
     listen();
-    pi.events?.emit("pi-agents:snapshot:request", {});
+    if (backend === "pi") pi.events?.emit("pi-agents:snapshot:request", {});
     broadcast({ type: "session_changed", ...state() });
   });
-  pi.on("session_info_changed", (_event, ctx) => {
-    lastCtx = ctx;
-    broadcast({ type: "session_changed", ...state() });
-  });
-  pi.on("model_select", (_event, ctx) => {
-    lastCtx = ctx;
-    broadcast({ type: "session_changed", ...state() });
-  });
-  pi.on("thinking_level_select", (_event, ctx) => {
-    lastCtx = ctx;
-    broadcast({ type: "session_changed", ...state() });
-  });
+  if (backend === "pi") {
+    pi.on("session_info_changed", (_event, ctx) => {
+      lastCtx = ctx;
+      broadcast({ type: "session_changed", ...state() });
+    });
+    pi.on("model_select", (_event, ctx) => {
+      lastCtx = ctx;
+      broadcast({ type: "session_changed", ...state() });
+    });
+    pi.on("thinking_level_select", (_event, ctx) => {
+      lastCtx = ctx;
+      broadcast({ type: "session_changed", ...state() });
+    });
+  } else {
+    const onSessionChanged = (_event: Record<string, unknown>, ctx: AgentwireContext) => {
+      lastCtx = ctx;
+      broadcast({ type: "session_changed", ...state() });
+    };
+    pi.on("session_switch", onSessionChanged);
+    pi.on("session_branch", onSessionChanged);
+    pi.on("session_tree", onSessionChanged);
+  }
   pi.on("agent_start", (_event, ctx) => {
     lastCtx = ctx;
     busy = true;
@@ -442,24 +464,37 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     updatedAt = new Date().toISOString();
     broadcast({ type: "agent_start" });
   });
-  pi.on("agent_settled", (_event, ctx) => {
-    lastCtx = ctx;
-    busy = false;
-    updatedAt = new Date().toISOString();
-    broadcast({ type: "agent_settled" });
-  });
-  pi.on("ui_prompt_start", (_event, ctx) => {
-    lastCtx = ctx;
-    waiting = true;
-    updatedAt = new Date().toISOString();
-    broadcast({ type: "session_changed", ...state() });
-  });
-  pi.on("ui_prompt_end", (_event, ctx) => {
-    lastCtx = ctx;
-    waiting = false;
-    updatedAt = new Date().toISOString();
-    broadcast({ type: "session_changed", ...state() });
-  });
+  if (backend === "pi") {
+    pi.on("agent_settled", (_event, ctx) => {
+      lastCtx = ctx;
+      busy = false;
+      updatedAt = new Date().toISOString();
+      broadcast({ type: "agent_settled" });
+    });
+    pi.on("ui_prompt_start", (_event, ctx) => {
+      lastCtx = ctx;
+      waiting = true;
+      updatedAt = new Date().toISOString();
+      broadcast({ type: "session_changed", ...state() });
+    });
+    pi.on("ui_prompt_end", (_event, ctx) => {
+      lastCtx = ctx;
+      waiting = false;
+      updatedAt = new Date().toISOString();
+      broadcast({ type: "session_changed", ...state() });
+    });
+  } else {
+    pi.on("agent_end", (event, ctx) => {
+      lastCtx = ctx;
+      if (event.willContinue === true) return;
+      ctx.setTimeout(() => {
+        if (!ctx.isIdle()) return;
+        busy = false;
+        updatedAt = new Date().toISOString();
+        broadcast({ type: "agent_settled" });
+      }, 0);
+    });
+  }
   pi.on("message_end", (event, ctx) => {
     lastCtx = ctx;
     const raw = event.message;
@@ -495,3 +530,9 @@ export default function agentwire(pi: AgentwireExtensionAPI) {
     lastCtx = undefined;
   });
 }
+
+export function createAgentwireExtension(backend: "pi" | "omp") {
+  return (pi: AgentwireExtensionAPI) => agentwire(pi, backend);
+}
+
+export default createAgentwireExtension("pi");
