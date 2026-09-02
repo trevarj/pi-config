@@ -1,3 +1,4 @@
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { AgentRecord, TaskRecord, TeamState } from "./types.ts";
 
@@ -5,31 +6,83 @@ export type DashboardAction = "message" | "pause" | "resume" | "retry" | "reconf
 export interface DashboardSelection { target: string; action: DashboardAction }
 
 type View = "agents" | "tasks" | "detail";
+type UiTheme = Pick<Theme, "fg" | "bg" | "bold">;
 
-export function panelSummary(state: TeamState): string[] {
+const plainTheme: UiTheme = {
+  fg: (_color, text) => text,
+  bg: (_color, text) => text,
+  bold: (text) => text,
+};
+
+function isFinalTask(task: TaskRecord): boolean {
+  return ["completed", "failed", "stopped"].includes(task.status);
+}
+
+function taskForAgent(state: TeamState, agent: AgentRecord): TaskRecord | undefined {
+  const assigned = state.tasks.find((task) => task.id === agent.taskId);
+  if (assigned && !isFinalTask(assigned)) return assigned;
+  return state.tasks.find((task) => (task.agentId === agent.id || task.reviewAgentId === agent.id) && !isFinalTask(task)) ?? assigned;
+}
+
+function statusColor(status: AgentRecord["status"] | TaskRecord["status"]): "success" | "warning" | "error" | "muted" {
+  if (["running", "reviewing", "fixing", "finalizing", "completed"].includes(status)) return "success";
+  if (["queued", "waiting", "paused"].includes(status)) return "warning";
+  if (["blocked", "failed"].includes(status)) return "error";
+  return "muted";
+}
+
+function thinkingColor(level: string): "thinkingOff" | "thinkingMinimal" | "thinkingLow" | "thinkingMedium" | "thinkingHigh" | "thinkingXhigh" | "thinkingMax" {
+  const colors = {
+    off: "thinkingOff", minimal: "thinkingMinimal", low: "thinkingLow", medium: "thinkingMedium",
+    high: "thinkingHigh", xhigh: "thinkingXhigh", max: "thinkingMax",
+  } as const;
+  return colors[level as keyof typeof colors] ?? "thinkingOff";
+}
+
+export function panelSummary(state: TeamState, theme: UiTheme = plainTheme, width = Number.MAX_SAFE_INTEGER): string[] {
   const active = state.agents.filter((agent) => agent.status === "running");
   const queued = state.tasks.filter((task) => task.status === "queued" || task.status === "waiting");
   const blocked = state.tasks.filter((task) => task.status === "blocked" || task.status === "failed");
-  if (!active.length && !queued.length && !blocked.length) return [];
-  const lines = [`agents ${active.length} active · ${queued.length} queued${blocked.length ? ` · ${blocked.length} blocked` : ""}`];
-  for (const agent of active.slice(0, 3)) {
-    const task = state.tasks.find((candidate) => candidate.id === agent.taskId);
-    lines.push(`  ${agent.name}: ${task?.title ?? agent.taskId ?? agent.status}`);
+  const visible = state.agents.filter((agent) => {
+    const task = taskForAgent(state, agent);
+    return agent.status === "running" || (!!task && !isFinalTask(task));
+  });
+  if (!active.length && !queued.length && !blocked.length && !visible.length) return [];
+  const heading = `${theme.fg("accent", theme.bold("Agents"))}  ${active.length} active · ${queued.length} queued${blocked.length ? ` · ${blocked.length} blocked` : ""}`;
+  const lines = [`${heading}  ${theme.fg("dim", "·")} ${theme.fg("accent", "/agents")} ${theme.fg("dim", "opens selectable view")}`];
+  for (const agent of visible.slice(0, 3)) {
+    const task = taskForAgent(state, agent);
+    const status = task?.status ?? agent.status;
+    const description = task?.title ?? "idle";
+    lines.push([
+      theme.fg(statusColor(status), agent.status === "running" ? "●" : "○"),
+      theme.bold(agent.name),
+      theme.fg("muted", `${agent.model.provider}/${agent.model.id}`),
+      theme.fg(thinkingColor(agent.thinking), agent.thinking),
+      description,
+      theme.fg(statusColor(status), `[${status}${task ? `/${task.phase}` : ""}]`),
+    ].join(" · "));
   }
-  if (active.length > 3) lines.push(`  +${active.length - 3} more`);
-  return lines;
+  if (visible.length > 3) lines.push(theme.fg("dim", `  +${visible.length - 3} more in /agents`));
+  return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
 }
 
 export class AgentsDashboard {
   private selected = 0;
   private view: View = "agents";
   private detail?: { kind: "agent" | "task"; id: string };
-  private readonly state: TeamState;
+  private readonly getState: () => TeamState;
   private readonly done: (value: DashboardSelection | null) => void;
+  private readonly theme: UiTheme;
 
-  constructor(state: TeamState, done: (value: DashboardSelection | null) => void) {
-    this.state = state;
+  constructor(state: TeamState | (() => TeamState), done: (value: DashboardSelection | null) => void, theme: UiTheme = plainTheme) {
+    this.getState = typeof state === "function" ? state : () => state;
     this.done = done;
+    this.theme = theme;
+  }
+
+  private get state(): TeamState {
+    return this.getState();
   }
 
   render(width: number): string[] {
@@ -88,20 +141,35 @@ export class AgentsDashboard {
 
   private listLines(): string[] {
     const agents = this.state.agents.filter((agent) => agent.status === "running").length;
-    const title = `Agents · ${agents} active / ${this.state.tasks.length} tasks · ${this.view === "agents" ? "[Agents] Tasks" : "Agents [Tasks]"}`;
-    const lines = [title, "tab switch · ↑↓ navigate · enter detail · m message · p pause · r resume · y retry · c configure · x stop · esc close"];
+    const activeTab = (label: string, active: boolean) => active
+      ? this.theme.bg("selectedBg", this.theme.fg("accent", this.theme.bold(` ${label} `)))
+      : this.theme.fg("muted", label);
+    const title = `${this.theme.fg("accent", this.theme.bold("Agents"))}  ${agents} active · ${this.state.tasks.length} tasks  ${activeTab("Agents", this.view === "agents")} ${activeTab("Tasks", this.view === "tasks")}`;
+    const lines = [title, this.theme.fg("dim", "tab switch · ↑↓ navigate · enter inspect · m message · p pause · r resume · y retry · c configure · x stop · esc close")];
     const items = this.items();
-    if (!items.length) lines.push(this.view === "agents" ? "No agents. Use /subagent or subagent_spawn." : "No tasks.");
+    this.selected = Math.min(this.selected, Math.max(0, items.length - 1));
+    if (!items.length) lines.push(this.theme.fg("muted", this.view === "agents" ? "No agents. Use /subagent or subagent_spawn." : "No tasks."));
     items.forEach((item, index) => {
-      const marker = index === this.selected ? ">" : " ";
+      const selected = index === this.selected;
+      const marker = this.theme.fg(selected ? "accent" : "dim", selected ? "›" : " ");
+      let row: string;
       if (this.view === "agents") {
         const agent = item as AgentRecord;
-        const task = this.state.tasks.find((candidate) => candidate.id === agent.taskId);
-        lines.push(`${marker} ${agent.name} [${agent.kind}] ${agent.status} · ${task?.title ?? "idle"} · ${agent.model.provider}/${agent.model.id}:${agent.thinking}`);
+        const task = taskForAgent(this.state, agent);
+        const status = task?.status ?? agent.status;
+        row = [
+          marker,
+          selected ? this.theme.fg("accent", this.theme.bold(agent.name)) : this.theme.bold(agent.name),
+          this.theme.fg("muted", `${agent.model.provider}/${agent.model.id}`),
+          this.theme.fg(thinkingColor(agent.thinking), `thinking:${agent.thinking}`),
+          task?.title ?? "idle",
+          this.theme.fg(statusColor(status), `[${status}${task ? `/${task.phase}` : ""}]`),
+        ].join("  ");
       } else {
         const task = item as TaskRecord;
-        lines.push(`${marker} ${task.id} [${task.phase}] ${task.status} · ${task.title} · ${task.agentId ?? "unassigned"}`);
+        row = `${marker} ${this.theme.bold(task.id)}  ${task.title}  ${this.theme.fg(statusColor(task.status), `[${task.status}/${task.phase}]`)}  ${this.theme.fg("muted", task.agentId ?? "unassigned")}`;
       }
+      lines.push(selected ? this.theme.bg("selectedBg", row) : row);
     });
     return lines;
   }
@@ -114,27 +182,27 @@ export class AgentsDashboard {
       const tasks = this.state.tasks.filter((task) => task.agentId === agent.id || task.reviewAgentId === agent.id);
       const actions = this.state.actions.filter((action) => action.agentId === agent.id).slice(-20);
       return [
-        `${agent.name} · ${agent.kind} · ${agent.status}`,
-        "m message · p pause · r resume · y retry · c configure · x stop · esc back",
-        `Model: ${agent.model.provider}/${agent.model.id}:${agent.thinking}`,
-        `Session: ${agent.sessionFile ?? "not started"}`,
-        ...tasks.map((task) => `Task ${task.id}: ${task.status}/${task.phase} · ${task.title}${task.error ? ` · ${task.error}` : ""}`),
-        "Recent transcript/actions:",
-        ...actions.flatMap((action) => [`${action.at} ${action.action}${action.isError ? " [error]" : ""}`, ...(action.output ? action.output.split("\n").slice(0, 4).map((line) => `  ${line}`) : [])]),
+        `${this.theme.fg("accent", this.theme.bold(agent.name))} · ${agent.kind} · ${this.theme.fg(statusColor(agent.status), agent.status)}`,
+        this.theme.fg("dim", "m message · p pause · r resume · y retry · c configure · x stop · esc back"),
+        `Model: ${this.theme.fg("muted", `${agent.model.provider}/${agent.model.id}`)} · Thinking: ${this.theme.fg(thinkingColor(agent.thinking), agent.thinking)}`,
+        `Session: ${this.theme.fg("muted", agent.sessionFile ?? "not started")}`,
+        ...tasks.map((task) => `Task ${this.theme.bold(task.id)}: ${this.theme.fg(statusColor(task.status), `${task.status}/${task.phase}`)} · ${task.title}${task.error ? ` · ${this.theme.fg("error", task.error)}` : ""}`),
+        this.theme.fg("accent", this.theme.bold("Recent transcript/actions")),
+        ...actions.flatMap((action) => [this.theme.fg(action.isError ? "error" : "muted", `${action.at} ${action.action}${action.isError ? " [error]" : ""}`), ...(action.output ? action.output.split("\n").slice(0, 4).map((line) => `  ${line}`) : [])]),
       ];
     }
     const task = this.state.tasks.find((candidate) => candidate.id === this.detail!.id);
     if (!task) return ["Task no longer exists", "esc back"];
     const actions = this.state.actions.filter((action) => action.taskId === task.id).slice(-20);
     return [
-      `${task.title} · ${task.status}/${task.phase}`,
-      "p pause · r resume · y retry · x stop · esc back",
-      `ID: ${task.id} · Agent: ${task.agentId ?? "unassigned"} · Paths: ${task.paths.join(", ") || "none"}`,
+      `${this.theme.fg("accent", this.theme.bold(task.title))} · ${this.theme.fg(statusColor(task.status), `${task.status}/${task.phase}`)}`,
+      this.theme.fg("dim", "p pause · r resume · y retry · x stop · esc back"),
+      `ID: ${this.theme.bold(task.id)} · Agent: ${task.agentId ?? "unassigned"} · Paths: ${task.paths.join(", ") || "none"}`,
       `Dependencies: ${task.dependsOn.join(", ") || "none"} · Turns: ${task.turns}/${task.maxTurns}`,
-      ...(task.error ? [`Error: ${task.error}`] : []),
-      ...(task.output ? ["Latest output:", ...task.output.split("\n").slice(0, 12)] : []),
-      "Recent transcript/actions:",
-      ...actions.flatMap((action) => [`${action.at} ${action.action}${action.isError ? " [error]" : ""}`, ...(action.output ? action.output.split("\n").slice(0, 4).map((line) => `  ${line}`) : [])]),
+      ...(task.error ? [this.theme.fg("error", `Error: ${task.error}`)] : []),
+      ...(task.output ? [this.theme.fg("accent", this.theme.bold("Latest output")), ...task.output.split("\n").slice(0, 12)] : []),
+      this.theme.fg("accent", this.theme.bold("Recent transcript/actions")),
+      ...actions.flatMap((action) => [this.theme.fg(action.isError ? "error" : "muted", `${action.at} ${action.action}${action.isError ? " [error]" : ""}`), ...(action.output ? action.output.split("\n").slice(0, 4).map((line) => `  ${line}`) : [])]),
     ];
   }
 }

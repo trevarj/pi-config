@@ -1223,7 +1223,10 @@ export class Coordinator {
     const snapshot = privacySnapshot(this.state);
     this.pi.events.emit("pi-agents:snapshot", snapshot);
     const lines = panelSummary(this.state);
-    this.ctx.ui.setWidget("pi-agents", lines.length ? lines : undefined);
+    this.ctx.ui.setWidget("pi-agents", lines.length ? (_tui, theme) => ({
+      render: (width) => panelSummary(this.current, theme, width),
+      invalidate() {},
+    }) : undefined);
   }
 
   async dashboard(ctx: ExtensionContext): Promise<void> {
@@ -1232,13 +1235,14 @@ export class Coordinator {
       return;
     }
     const selection = await ctx.ui.custom<{ target: string; action: DashboardAction } | null>(
-      (tui, _theme, _keybindings, done) => {
+      (tui, theme, _keybindings, done) => {
         let timer: NodeJS.Timeout | undefined;
         const finish = (value: { target: string; action: DashboardAction } | null) => {
           if (timer) clearInterval(timer);
           done(value);
         };
-        const dashboard = new AgentsDashboard(this.current, finish);
+        // Read current state on every render because persistence replaces the state object.
+        const dashboard = new AgentsDashboard(() => this.current, finish, theme);
         timer = setInterval(() => tui.requestRender(), 500);
         timer.unref();
         return {
